@@ -21,7 +21,7 @@ app:
 whatsapp:
   phone-number-id: 769834166221609      # <--- replace with your phone_number_id
   api-version: v24.0                    # use the API version you have (v24.0 or v25.0 etc.)
-  access-token: ${WHATSAPP_ACCESS_TOKEN:EAAWJzCZCSj3QBPszLTNmQBkI30rCf9QdU1KqKBHK6Mhd214W34RcpP97kPrUOfXEaVe33h7pSBMebMwmXlV9PBjLMgLAv0CEbDwJioduTDmDmEkQMV0yc9cRRXBRd879ItZA1mlRHEXohvj8116PoE9HhsmIokd3Su8lyXHY6KUUk9cfZBdVZBfJPrHIu7RGlf9XvjZCS4zrnMrhrIW8HTRe5ZAyDXLLo35T7h0nOMCNX03B2vZA0zfr7Uwo6MZD} # use env var in production
+  access-token: ${WHATSAPP_ACCESS_TOKEN:EAAWJzCZCSj3QBPkIiKBGjMEGfBOBo9L8smYa9gpSDagRSIJszl4DHGEwtFqtlreK5dIo7ZC9NrxtkRP7sFzkkrWjO7YNyw57RagAdNQsGwQDrqDe6ZAbMJURtdySuPZBoqrM0ZBZCPMxi4ly9qxeLFjoDbFDZA6oqOMEOcBmJjBwJVn2L2DR7zpmlcbA4oofEj40V6ZC5ZAXBHZB0rWWripCdMFZAMjGnZB4q4VP0UoZAqooRxUv2ovOrUZBF99FroiX8ZD} # use env var in production
   api-base-url: https://graph.facebook.com
 
 facebook:
