@@ -1,0 +1,32 @@
+server:
+  port: 8080
+spring:
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://db.izzzekytstffifmvoxoz.supabase.co:5432/postgres}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:ED%@zsR6FadXa4S}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        format_sql: true
+        jdbc:
+          lob:
+            non_contextual_creation: true
+  application:
+    name: whatsapp-rental-bot
+app:
+  shop-address: "No. 1, Paramulla Road, Matara"
+whatsapp:
+  phone-number-id: 769834166221609      # <--- replace with your phone_number_id
+  api-version: v24.0                    # use the API version you have (v24.0 or v25.0 etc.)
+  access-token: ${WHATSAPP_ACCESS_TOKEN:EAAWJzCZCSj3QBPszLTNmQBkI30rCf9QdU1KqKBHK6Mhd214W34RcpP97kPrUOfXEaVe33h7pSBMebMwmXlV9PBjLMgLAv0CEbDwJioduTDmDmEkQMV0yc9cRRXBRd879ItZA1mlRHEXohvj8116PoE9HhsmIokd3Su8lyXHY6KUUk9cfZBdVZBfJPrHIu7RGlf9XvjZCS4zrnMrhrIW8HTRe5ZAyDXLLo35T7h0nOMCNX03B2vZA0zfr7Uwo6MZD} # use env var in production
+  api-base-url: https://graph.facebook.com
+
+facebook:
+  app:
+    secret: ${FACEBOOK_APP_SECRET:}     # optional - for X-Hub-Signature-256 verification
+
+security:
+  verify-token: ${WHATSAPP_VERIFY_TOKEN:moto_verify_2025}
