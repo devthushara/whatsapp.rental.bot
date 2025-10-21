@@ -2,7 +2,7 @@ server:
   port: 8080
 spring:
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://db.izzzekytstffifmvoxoz.supabase.co:5432/postgres}
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://db.izzzekytstffifmvoxoz.supabase.co:5432/postgres?sslmode=require}
     username: ${SPRING_DATASOURCE_USERNAME:postgres}
     password: ${SPRING_DATASOURCE_PASSWORD:ED%@zsR6FadXa4S}
   jpa:
@@ -21,7 +21,7 @@ app:
 whatsapp:
   phone-number-id: 769834166221609      # <--- replace with your phone_number_id
   api-version: v24.0                    # use the API version you have (v24.0 or v25.0 etc.)
-  access-token: ${WHATSAPP_ACCESS_TOKEN:EAAWJzCZCSj3QBPkIiKBGjMEGfBOBo9L8smYa9gpSDagRSIJszl4DHGEwtFqtlreK5dIo7ZC9NrxtkRP7sFzkkrWjO7YNyw57RagAdNQsGwQDrqDe6ZAbMJURtdySuPZBoqrM0ZBZCPMxi4ly9qxeLFjoDbFDZA6oqOMEOcBmJjBwJVn2L2DR7zpmlcbA4oofEj40V6ZC5ZAXBHZB0rWWripCdMFZAMjGnZB4q4VP0UoZAqooRxUv2ovOrUZBF99FroiX8ZD} # use env var in production
+  access-token: ${WHATSAPP_ACCESS_TOKEN:EAAWJzCZCSj3QBPpnVRxaxXTjtTJleOzWwoxle9N0ncExFDE8I1sTCaU4CvXFaNqXpxqlAPRnjvEJrsmW8ZCvH6Fr7fyTIQibWyUxgHVzZCR75vXP8YFvgYeM88mTUykCPooGizMOGzYyQ6mU4sX9pA3vrObwXF6eyuyJzO57Sj6JpZBeAnidGTH7zZCEXYZCO3KaSpMWOd5sDKvPznBwHqGI7lfiMJeaEM5vqLXzMRavgky3hJ3e6y6vxAVpgZD} # use env var in production
   api-base-url: https://graph.facebook.com
 
 facebook:
