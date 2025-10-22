@@ -1,9 +1,11 @@
 package com.zoomigo.whatsapp.whatsapprentalbot.service;
 
 import com.zoomigo.whatsapp.whatsapprentalbot.entity.Bike;
+import com.zoomigo.whatsapp.whatsapprentalbot.entity.Booking;
 import com.zoomigo.whatsapp.whatsapprentalbot.entity.ChatSessionEntity;
 import com.zoomigo.whatsapp.whatsapprentalbot.entity.User;
 import com.zoomigo.whatsapp.whatsapprentalbot.repository.BikeRepository;
+import com.zoomigo.whatsapp.whatsapprentalbot.repository.BookingRepository;
 import com.zoomigo.whatsapp.whatsapprentalbot.repository.ChatSessionRepository;
 import com.zoomigo.whatsapp.whatsapprentalbot.repository.UserRepository;
 import lombok.extern.slf4j.Slf4j;
@@ -14,10 +16,12 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.Year;
 import java.time.format.DateTimeFormatter;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
+import com.joestelmach.natty.Parser;
+import java.time.ZoneId;
+import java.util.Date;
 import java.util.List;
-import java.util.Map;
+import java.util.Locale;
+import java.util.*;
 
 @Slf4j
 @Service
@@ -26,20 +30,20 @@ public class ConversationService {
     private final UserRepository userRepo;
     private final BikeRepository bikeRepo;
     private final ChatSessionRepository chatSessionRepo;
+    private final BookingRepository bookingRepo;
     private final SessionResetService sessionResetService;
-
-
+    private final DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("dd MMM yyyy");
     @Value("${app.shop-address}")
     private String shopAddress;
 
-    private final DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("dd MMM yyyy");
-
     public ConversationService(UserRepository userRepo, BikeRepository bikeRepo,
                                ChatSessionRepository chatSessionRepo,
-                               SessionResetService sessionResetService) {
+                               SessionResetService sessionResetService,
+                               BookingRepository bookingRepo) {
         this.userRepo = userRepo;
         this.bikeRepo = bikeRepo;
         this.chatSessionRepo = chatSessionRepo;
+        this.bookingRepo = bookingRepo;
         this.sessionResetService = sessionResetService;
     }
 
@@ -47,12 +51,6 @@ public class ConversationService {
     public String handleMessage(String from, String text) {
         text = text.trim();
         log.info("📨 Message from {}: '{}'", from, text);
-
-        // 🧨 Kill switch
-        if (text.equalsIgnoreCase("cancel")) {
-            sessionResetService.resetUserAndSession(from);
-            return "❌ Your booking has been cancelled.\nYou can start a new one anytime by typing *Hi* 👋";
-        }
 
         User user = userRepo.findByPhoneNumber(from)
                 .orElseGet(() -> {
@@ -67,6 +65,15 @@ public class ConversationService {
 
         Map<String, Object> sessionData = readSessionData(session);
         String stage = user.getStage();
+
+        if(!"BOOKING_CONFIRMED".equals(stage)) {
+            // 🧨 Kill switch
+            if (text.equalsIgnoreCase("cancel")) {
+                sessionResetService.resetUserAndSession(from);
+                return "❌ Your booking has been cancelled.\nYou can start a new one anytime by typing *Hi* 👋";
+            }
+        }
+
         log.info("➡️ Stage: {}", stage);
 
         switch (stage) {
@@ -178,29 +185,107 @@ public class ConversationService {
 
             case "CONFIRM_BIKE":
                 if ("1".equalsIgnoreCase(text)) {
-                    save(user, session, "WAITING_DOCUMENTS", sessionData);
+                    // ✅ Confirm booking immediately
+                    Bike selectedBike2 = bikeRepo.findById(user.getSelectedBikeId()).orElse(null);
+                    if (selectedBike2 != null) {
+                        LocalDate endDate2 = user.getStartDate().plusDays(user.getDays());
 
-                    String pickupMsg2 = user.getPickupType().equals("Pickup at shop")
-                            ? "\n🏠 Shop address: *" + shopAddress + "*"
-                            : "";
+                        Booking booking = new Booking();
+                        booking.setWaId(user.getPhoneNumber());
+                        booking.setName(user.getName());
+                        booking.setBike(selectedBike2.getName());
+                        booking.setDuration(user.getDays());
+                        booking.setPrice(selectedBike2.getPricePerDay() * user.getDays());
+                        booking.setDeposit(selectedBike2.getDeposit());
+                        booking.setStatus("CONFIRMED");
+                        booking.setStartDate(user.getStartDate());
+                        booking.setEndDate(endDate2);
+                        booking.setPickupType(user.getPickupType());
+                        booking.setDeliveryAddress(user.getDeliveryAddress());
+                        booking.setCreatedAt(Instant.now());
+                        bookingRepo.save(booking);
 
-                    return "✅ Great choice!\nPlease prepare the following documents:\n" +
-                            "📸 *Driver’s or international license*\n" +
-                            "📄 *Passport & visa QR*\n\n" +
-                            "Our team will reach out soon to confirm your booking." + pickupMsg2 +
-                            "\n\n💡 Tip: Type 'cancel' anytime to cancel or start over.";
-                }
-                else if ("2".equalsIgnoreCase(text)) {
+                        log.info("🧾 Booking CONFIRMED and saved for {}", user.getPhoneNumber());
+
+                        save(user, session, "BOOKING_CONFIRMED", sessionData);
+
+                        String pickupMsg2 = user.getPickupType().equals("Pickup at shop")
+                                ? "\n🏠 Pickup location: *" + shopAddress + "*"
+                                : "";
+
+                        double total2 = selectedBike2.getPricePerDay() * user.getDays();
+                        double deposit2 = selectedBike2.getDeposit();
+
+                        return String.format(
+                                "✅ Booking confirmed, %s! 🎉\n" +
+                                        "📅 *%s → %s*\n🏍️ *%s*\n💰 Rs%.2f + deposit Rs%.2f\n\n" +
+                                        "Please prepare your documents for verification:\n" +
+                                        "📸 Driver’s or international license\n📄 Passport & visa QR\n\n" +
+                                        "Our team will contact you soon to finalize pickup or delivery.%s\n\n" +
+                                        "💡 You can type *cancel* anytime to cancel your booking.",
+                                user.getName(),
+                                dateFormatter.format(user.getStartDate()),
+                                dateFormatter.format(endDate2),
+                                selectedBike2.getName(),
+                                total2,
+                                deposit2,
+                                pickupMsg2
+                        );
+                    }
+                    return "⚠️ Something went wrong saving your booking. Please try again.";
+                } else if ("2".equalsIgnoreCase(text)) {
                     save(user, session, "ASK_BIKE", sessionData);
-                    return "No worries! Please choose another bike number.";
+                    return "No problem! Please choose another bike number.";
                 }
                 return "❌ Please reply 1️⃣ to confirm or 2️⃣ to reselect.";
 
-            case "WAITING_DOCUMENTS":
-                return "📩 Thank you! We’ve received your booking details and documents.\n" +
-                        "Our team is reviewing your request and will contact you shortly to confirm your pickup or delivery.\n\n" +
-                        "📞 For urgent matters, please call us directly.\n" +
-                        "💡 You can also type *cancel* to start a new booking anytime.";
+
+// 🔸 BOOKING_CONFIRMED
+            case "BOOKING_CONFIRMED":
+                if (text.equalsIgnoreCase("cancel")) {
+                    save(user, session, "CANCEL_CONFIRM", sessionData);
+                    return "⚠️ Are you sure you want to cancel your confirmed booking?\n\n" +
+                            "1️⃣ Yes, cancel my booking\n" +
+                            "2️⃣ No, keep it active";
+                }
+                return "✅ Your booking is confirmed! Our team will contact you soon.\n" +
+                        "💡 You can type *cancel* if you really wish to cancel this booking.";
+
+
+// 🔸 CANCEL_CONFIRM
+            case "CANCEL_CONFIRM":
+                if ("1".equalsIgnoreCase(text)) {
+                    Booking bookingToCancel = bookingRepo.findTopByWaIdOrderByCreatedAtDesc(user.getPhoneNumber())
+                            .orElse(null);
+
+                    if (bookingToCancel != null && !"CANCELLED".equalsIgnoreCase(bookingToCancel.getStatus())) {
+                        bookingToCancel.setStatus("CANCELLED");
+                        bookingToCancel.setCancelledAt(Instant.now());
+                        bookingRepo.save(bookingToCancel);
+
+                        log.info("❌ Booking cancelled for user {}", user.getPhoneNumber());
+
+                        // ✅ Optional: Notify admin(s)
+            /*
+            List<String> adminNumbers = List.of("6598765432", "6587654321");
+            String alert = String.format(
+                "🚨 *Booking Cancelled!*\n👤 %s (%s)\n🏍️ %s\n📅 %s → %s",
+                bookingToCancel.getName(), bookingToCancel.getWaId(),
+                bookingToCancel.getBike(),
+                bookingToCancel.getStartDate(), bookingToCancel.getEndDate()
+            );
+            adminNumbers.forEach(num -> whatsappService.sendTextMessage(num, alert));
+            */
+                    }
+
+                    sessionResetService.resetUserAndSession(user.getPhoneNumber());
+                    return "✅ Your booking has been cancelled.\nYou can start a new one anytime by typing *Hi* 👋";
+                } else if ("2".equalsIgnoreCase(text)) {
+                    save(user, session, "BOOKING_CONFIRMED", sessionData);
+                    return "✅ Your booking remains active.\nWe’ll contact you soon for pickup or delivery.";
+                }
+                return "❌ Please reply 1️⃣ to cancel or 2️⃣ to keep your booking.";
+
 
             default:
                 // Catch-all for any unexpected stage
@@ -211,16 +296,59 @@ public class ConversationService {
     }
 
     private LocalDate parseDate(String text) {
-        text = text.toLowerCase();
+        if (text == null || text.isBlank()) return null;
+
+        text = text.toLowerCase().trim();
+
+        // Handle 'today'
         if (text.equals("today")) return LocalDate.now();
+
+        // Remove ordinal suffixes like 1st, 2nd, 25th
+        text = text.replaceAll("(\\d+)(st|nd|rd|th)", "$1");
+
+        // First try strict patterns (yyyy-M-d, d MMM, MMM d, etc.)
+        LocalDate strictDate = tryStrictPatterns(text);
+        if (strictDate != null) return strictDate;
+
+        // If strict parsing fails, try Natty
         try {
-            if (text.matches("\\d{4}-\\d{2}-\\d{2}"))
-                return LocalDate.parse(text);
-            return LocalDate.parse(text + " " + Year.now(), DateTimeFormatter.ofPattern("d MMM yyyy"));
+            Parser parser = new Parser();
+            List<com.joestelmach.natty.DateGroup> groups = parser.parse(text);
+
+            if (!groups.isEmpty()) {
+                Date date = groups.get(0).getDates().get(0);
+                return Instant.ofEpochMilli(date.getTime())
+                        .atZone(ZoneId.systemDefault())
+                        .toLocalDate();
+            }
         } catch (Exception e) {
-            log.warn("⚠️ error occurred while parsing the date: {}", e.getMessage());
-            return null;
+            log.warn("⚠️ Natty failed to parse '{}': {}", text, e.getMessage());
         }
+
+        log.warn("⚠️ Could not parse date '{}'", text);
+        return null;
+    }
+
+    private LocalDate tryStrictPatterns(String text) {
+        DateTimeFormatter[] formatters = new DateTimeFormatter[]{
+                DateTimeFormatter.ofPattern("yyyy-M-d"),
+                DateTimeFormatter.ofPattern("yyyy-MM-dd"),
+                DateTimeFormatter.ofPattern("d MMM yyyy"),
+                DateTimeFormatter.ofPattern("MMM d yyyy"),
+                DateTimeFormatter.ofPattern("d MMM"),
+                DateTimeFormatter.ofPattern("MMM d")
+        };
+
+        boolean appendYear = !text.matches(".*\\d{4}.*");
+
+        for (DateTimeFormatter formatter : formatters) {
+            try {
+                String parseText = text;
+                if (appendYear) parseText += " " + Year.now().getValue();
+                return LocalDate.parse(parseText, formatter.withLocale(Locale.ENGLISH));
+            } catch (Exception ignored) {}
+        }
+        return null;
     }
 
     private void save(User user, ChatSessionEntity session, String nextState, Map<String, Object> sessionData) {

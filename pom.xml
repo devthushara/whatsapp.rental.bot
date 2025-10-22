@@ -46,6 +46,12 @@
             <scope>runtime</scope>
         </dependency>
 
+        <dependency>
+            <groupId>com.joestelmach</groupId>
+            <artifactId>natty</artifactId>
+            <version>0.13</version>
+        </dependency>
+
         <!-- Optional: logging -->
         <dependency>
             <groupId>org.slf4j</groupId>
