@@ -1,6 +1,5 @@
 package com.zoomigo.whatsapp.whatsapprentalbot.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zoomigo.whatsapp.whatsapprentalbot.entity.Bike;
 import com.zoomigo.whatsapp.whatsapprentalbot.entity.ChatSessionEntity;
 import com.zoomigo.whatsapp.whatsapprentalbot.entity.User;
@@ -11,9 +10,14 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.time.*;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.Year;
 import java.time.format.DateTimeFormatter;
-import java.util.*;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Service
@@ -22,18 +26,23 @@ public class ConversationService {
     private final UserRepository userRepo;
     private final BikeRepository bikeRepo;
     private final ChatSessionRepository chatSessionRepo;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final SessionResetService sessionResetService;
+
 
     @Value("${app.shop-address}")
     private String shopAddress;
 
     private final DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("dd MMM yyyy");
 
-    public ConversationService(UserRepository userRepo, BikeRepository bikeRepo, ChatSessionRepository chatSessionRepo) {
+    public ConversationService(UserRepository userRepo, BikeRepository bikeRepo,
+                               ChatSessionRepository chatSessionRepo,
+                               SessionResetService sessionResetService) {
         this.userRepo = userRepo;
         this.bikeRepo = bikeRepo;
         this.chatSessionRepo = chatSessionRepo;
+        this.sessionResetService = sessionResetService;
     }
+
 
     public String handleMessage(String from, String text) {
         text = text.trim();
@@ -41,11 +50,7 @@ public class ConversationService {
 
         // 🧨 Kill switch
         if (text.equalsIgnoreCase("cancel")) {
-            userRepo.findByPhoneNumber(from).ifPresent(u -> {
-                u.setStage("START");
-                userRepo.save(u);
-            });
-            chatSessionRepo.deleteByWaId(from);
+            sessionResetService.resetUserAndSession(from);
             return "❌ Your booking has been cancelled.\nYou can start a new one anytime by typing *Hi* 👋";
         }
 
@@ -172,21 +177,36 @@ public class ConversationService {
                         total, deposit, pickupMsg);
 
             case "CONFIRM_BIKE":
-                if ("1".equals(text)) {
+                if ("1".equalsIgnoreCase(text)) {
                     save(user, session, "WAITING_DOCUMENTS", sessionData);
+
                     String pickupMsg2 = user.getPickupType().equals("Pickup at shop")
                             ? "\n🏠 Shop address: *" + shopAddress + "*"
                             : "";
-                    return "✅ Great choice!\nPlease prepare the following documents:\n📸 Driver’s or international license\n📄 Passport & visa QR\n\nOur team will reach out soon to confirm your booking."
-                            + pickupMsg2 + "\n\n💡 Tip: Type 'cancel' anytime to cancel or start over.";
-                } else if ("2".equals(text)) {
+
+                    return "✅ Great choice!\nPlease prepare the following documents:\n" +
+                            "📸 *Driver’s or international license*\n" +
+                            "📄 *Passport & visa QR*\n\n" +
+                            "Our team will reach out soon to confirm your booking." + pickupMsg2 +
+                            "\n\n💡 Tip: Type 'cancel' anytime to cancel or start over.";
+                }
+                else if ("2".equalsIgnoreCase(text)) {
                     save(user, session, "ASK_BIKE", sessionData);
                     return "No worries! Please choose another bike number.";
                 }
                 return "❌ Please reply 1️⃣ to confirm or 2️⃣ to reselect.";
 
+            case "WAITING_DOCUMENTS":
+                return "📩 Thank you! We’ve received your booking details and documents.\n" +
+                        "Our team is reviewing your request and will contact you shortly to confirm your pickup or delivery.\n\n" +
+                        "📞 For urgent matters, please call us directly.\n" +
+                        "💡 You can also type *cancel* to start a new booking anytime.";
+
             default:
-                return "👋 Hi again! Type *Hi* to start a new booking.";
+                // Catch-all for any unexpected stage
+                return "🤖 Hmm, looks like something got mixed up.\n" +
+                        "Please type *Hi* to start a new booking or *cancel* to reset.";
+
         }
     }
 
