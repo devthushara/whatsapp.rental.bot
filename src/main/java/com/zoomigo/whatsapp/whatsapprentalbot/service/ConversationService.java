@@ -11,7 +11,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.time.Instant;
+import java.time.*;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 @Slf4j
@@ -26,6 +27,8 @@ public class ConversationService {
     @Value("${app.shop-address}")
     private String shopAddress;
 
+    private final DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("dd MMM yyyy");
+
     public ConversationService(UserRepository userRepo, BikeRepository bikeRepo, ChatSessionRepository chatSessionRepo) {
         this.userRepo = userRepo;
         this.bikeRepo = bikeRepo;
@@ -35,6 +38,16 @@ public class ConversationService {
     public String handleMessage(String from, String text) {
         text = text.trim();
         log.info("📨 Message from {}: '{}'", from, text);
+
+        // 🧨 Kill switch
+        if (text.equalsIgnoreCase("cancel")) {
+            userRepo.findByPhoneNumber(from).ifPresent(u -> {
+                u.setStage("START");
+                userRepo.save(u);
+            });
+            chatSessionRepo.deleteByWaId(from);
+            return "❌ Your booking has been cancelled.\nYou can start a new one anytime by typing *Hi* 👋";
+        }
 
         User user = userRepo.findByPhoneNumber(from)
                 .orElseGet(() -> {
@@ -56,7 +69,7 @@ public class ConversationService {
             case "START":
                 user.setStage("ASK_NAME");
                 save(user, session, "ASK_NAME", sessionData);
-                return "👋 Hello! Welcome to *ZoomiGo MotoRent*.\nPlease tell me your *name* to start your booking.";
+                return "👋 Welcome to *ZoomiGo MotoRent*!\nPlease tell me your *name* to start your booking.";
 
             case "ASK_NAME":
                 if (text.equalsIgnoreCase("hi") || text.equalsIgnoreCase("hello")) {
@@ -64,18 +77,29 @@ public class ConversationService {
                 }
                 user.setName(text);
                 save(user, session, "ASK_DAYS", sessionData);
-                return "Thanks, " + text + "! 🙏\nHow many *days* would you like to rent the bike? (Enter a number)";
+                return String.format(
+                        "Thanks, %s! 🙏\nHow many *days* would you like to rent the bike? (Enter a number)\n\n💡 Tip: Type 'cancel' anytime to reset or start over.",
+                        text);
 
             case "ASK_DAYS":
                 try {
                     int days = Integer.parseInt(text);
                     if (days <= 0) throw new NumberFormatException();
                     user.setDays(days);
-                    save(user, session, "ASK_PICKUP", sessionData);
-                    return "Got it! How would you like to pick up your bike?\n1️⃣ Pickup at shop\n2️⃣ Home delivery";
+                    save(user, session, "ASK_START_DATE", sessionData);
+                    return "Got it! 📅 Please enter your *rental start date*.\n(You can type 'today' or a date like '25 Oct' or '2025-10-25')";
                 } catch (NumberFormatException e) {
                     return "❌ Please enter a valid number of days.";
                 }
+
+            case "ASK_START_DATE":
+                LocalDate startDate = parseDate(text);
+                if (startDate == null) {
+                    return "⚠️ Please enter a valid date (e.g., 'today', '25 Oct', or '2025-10-25').";
+                }
+                user.setStartDate(startDate);
+                save(user, session, "ASK_PICKUP", sessionData);
+                return "How would you like to pick up your bike?\n1️⃣ Pickup at shop\n2️⃣ Home delivery";
 
             case "ASK_PICKUP":
                 if ("1".equals(text)) {
@@ -84,7 +108,7 @@ public class ConversationService {
                 } else if ("2".equals(text)) {
                     user.setPickupType("Home delivery");
                     save(user, session, "ASK_ADDRESS", sessionData);
-                    return "Since you selected *home delivery*, please enter your *delivery address* (if unsure, just give the nearest town name).";
+                    return "Since you selected *home delivery*, please enter your *delivery address*.\n(If unsure, just type your nearest town name.)";
                 } else {
                     return "❌ Please reply with 1 or 2 to choose pickup method.";
                 }
@@ -100,7 +124,6 @@ public class ConversationService {
                 List<Bike> availableBikes = bikeRepo.findByIsAvailableTrue();
                 if (availableBikes.isEmpty()) return "⚠️ Sorry, no bikes are available now.";
 
-                // Get bikeMap from session or create a new one
                 Map<String, Object> bikeMapRaw = (Map<String, Object>) sessionData.get("bikeMap");
                 if (bikeMapRaw == null) {
                     bikeMapRaw = new LinkedHashMap<>();
@@ -108,7 +131,7 @@ public class ConversationService {
                     for (int i = 0; i < availableBikes.size(); i++) {
                         Bike b = availableBikes.get(i);
                         String id = String.valueOf(i + 1);
-                        bikeMapRaw.put(id, b.getId());  // store as Number (Integer or Long)
+                        bikeMapRaw.put(id, b.getId());
                         list.append(id).append(". ").append(b.getName())
                                 .append(" - Rs.").append(b.getPricePerDay()).append("/day\n");
                     }
@@ -117,34 +140,36 @@ public class ConversationService {
                     return list + "\nPlease reply with the *bike number* to continue.";
                 }
 
-                // Convert all numbers to Long safely
                 Map<String, Long> bikeMap = new LinkedHashMap<>();
                 for (Map.Entry<String, Object> entry : bikeMapRaw.entrySet()) {
                     bikeMap.put(entry.getKey(), ((Number) entry.getValue()).longValue());
                 }
 
-                // Now handle user input
                 if (!bikeMap.containsKey(text)) {
                     return "❌ Invalid bike number. Please choose again.";
                 }
 
                 Long selectedBikeId = bikeMap.get(text);
-                Optional<Bike> optBike = bikeRepo.findById(selectedBikeId);
-                if (optBike.isEmpty()) return "❌ Invalid selection. Please choose again.";
-                Bike selectedBike = optBike.get();
+                Bike selectedBike = bikeRepo.findById(selectedBikeId).orElse(null);
+                if (selectedBike == null) return "❌ Invalid selection. Please choose again.";
 
                 user.setSelectedBikeId(selectedBikeId);
                 save(user, session, "CONFIRM_BIKE", sessionData);
 
-                double total = selectedBike.getPricePerDay().doubleValue() * user.getDays();
-                double deposit = selectedBike.getDeposit().doubleValue(); // if deposit is Integer
-                String pickupMsg = user.getPickupType() != null && user.getPickupType().equals("Pickup at shop")
-                        ? "\n🏠 Shop address: *" + shopAddress + "*" : "";
+                LocalDate endDate = user.getStartDate().plusDays(user.getDays());
+                double total = selectedBike.getPricePerDay() * user.getDays();
+                double deposit = selectedBike.getDeposit();
+                String pickupMsg = user.getPickupType().equals("Pickup at shop")
+                        ? "\n🏠 Shop address: *" + shopAddress + "*"
+                        : "";
 
                 return String.format(
-                        "You selected *%s* for %d days.\nTotal: Rs%.2f + deposit Rs%.2f\n\nConfirm booking?\n1️⃣ Yes\n2️⃣ No%s",
-                        selectedBike.getName(), user.getDays(), total, deposit, pickupMsg);
-
+                        "You selected *%s* for %d days (%s → %s).\nTotal: Rs%.2f + deposit Rs%.2f\n\nConfirm booking?\n1️⃣ Yes\n2️⃣ No%s",
+                        selectedBike.getName(),
+                        user.getDays(),
+                        dateFormatter.format(user.getStartDate()),
+                        dateFormatter.format(endDate),
+                        total, deposit, pickupMsg);
 
             case "CONFIRM_BIKE":
                 if ("1".equals(text)) {
@@ -152,36 +177,29 @@ public class ConversationService {
                     String pickupMsg2 = user.getPickupType().equals("Pickup at shop")
                             ? "\n🏠 Shop address: *" + shopAddress + "*"
                             : "";
-                    return "✅ Great choice!\nPlease prepare the following documents:\n📸 Driver’s or international license\n📄 Passport & visa QR\n\nOur team will reach out soon to confirm delivery or pickup."
-                            + pickupMsg2;
+                    return "✅ Great choice!\nPlease prepare the following documents:\n📸 Driver’s or international license\n📄 Passport & visa QR\n\nOur team will reach out soon to confirm your booking."
+                            + pickupMsg2 + "\n\n💡 Tip: Type 'cancel' anytime to cancel or start over.";
                 } else if ("2".equals(text)) {
                     save(user, session, "ASK_BIKE", sessionData);
-                    return "No problem! Please choose another bike number.";
+                    return "No worries! Please choose another bike number.";
                 }
                 return "❌ Please reply 1️⃣ to confirm or 2️⃣ to reselect.";
 
-            case "WAITING_DOCUMENTS":
-                return "📩 We’ve already received your booking. Please prepare your documents — our team will contact you soon.";
-
             default:
-                if (session.getState().equals("ASK_BIKE")) {
-                    Map<String, Long> bikes = (Map<String, Long>) sessionData.get("bikeMap");
-                    if (bikes == null || !bikes.containsKey(text))
-                        return "❌ Invalid bike number. Please choose again.";
-
-                    Long bikeId = bikes.get(text);
-                    Optional<Bike> opt = bikeRepo.findById(bikeId);
-                    if (opt.isEmpty()) return "❌ Invalid selection. Please choose again.";
-                    Bike bike = opt.get();
-
-                    user.setSelectedBikeId(bikeId);
-                    save(user, session, "CONFIRM_BIKE", sessionData);
-                    double total2 = bike.getPricePerDay() * user.getDays();
-                    return String.format("You selected *%s* for %d days.\nTotal: ¥%.2f + deposit ¥%.2f\n\nConfirm booking?\n1️⃣ Yes\n2️⃣ No",
-                            bike.getName(), user.getDays(), total2, bike.getDeposit());
-                }
-
                 return "👋 Hi again! Type *Hi* to start a new booking.";
+        }
+    }
+
+    private LocalDate parseDate(String text) {
+        text = text.toLowerCase();
+        if (text.equals("today")) return LocalDate.now();
+        try {
+            if (text.matches("\\d{4}-\\d{2}-\\d{2}"))
+                return LocalDate.parse(text);
+            return LocalDate.parse(text + " " + Year.now(), DateTimeFormatter.ofPattern("d MMM yyyy"));
+        } catch (Exception e) {
+            log.warn("⚠️ error occurred while parsing the date: {}", e.getMessage());
+            return null;
         }
     }
 
@@ -194,24 +212,21 @@ public class ConversationService {
     private void saveSession(ChatSessionEntity session, String nextState, Map<String, Object> sessionData) {
         try {
             session.setState(nextState);
-            session.setDataJson(sessionData);  // ✅ store as Map directly
+            session.setDataJson(sessionData);
             session.setLastUpdated(Instant.now());
             chatSessionRepo.save(session);
-            log.debug("💾 Session saved for {} with state {} and data {}", session.getWaId(), nextState, sessionData);
         } catch (Exception e) {
-            log.error("⚠️ Failed to save session for {}: {}", session.getWaId(), e.getMessage(), e);
+            log.error("⚠️ Failed to save session: {}", e.getMessage());
         }
     }
 
-    //@SuppressWarnings("unchecked")
     private Map<String, Object> readSessionData(ChatSessionEntity session) {
         try {
             if (session.getDataJson() == null) return new HashMap<>();
-            return session.getDataJson();  // ✅ already a Map due to JsonbConverter
+            return session.getDataJson();
         } catch (Exception e) {
-            log.error("⚠️ Failed to read session data for {}: {}", session.getWaId(), e.getMessage(), e);
+            log.error("⚠️ Failed to parse session JSON", e);
             return new HashMap<>();
         }
     }
-
 }

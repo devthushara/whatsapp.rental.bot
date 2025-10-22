@@ -3,6 +3,8 @@ package com.zoomigo.whatsapp.whatsapprentalbot.entity;
 import jakarta.persistence.*;
 import lombok.Data;
 
+import java.time.LocalDate;
+
 @Entity
 @Table(name = "users")
 @Data
@@ -20,4 +22,6 @@ public class User {
     private String deliveryAddress;
     private Long selectedBikeId;
     private String stage; // ASK_NAME, ASK_DAYS, etc.
+
+    private LocalDate startDate;
 }

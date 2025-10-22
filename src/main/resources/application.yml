@@ -2,9 +2,9 @@ server:
   port: 8080
 spring:
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://dpg-d3rlplc9c44c73aqjfe0-a.singapore-postgres.render.com/postgres_lope}
-    username: ${SPRING_DATASOURCE_USERNAME:postgres_lope_user}
-    password: ${SPRING_DATASOURCE_PASSWORD:hYIeGpdSA5wT5F8AkI2BgFeIyrv4GDHW}
+    url: ${SPRING_DATASOURCE_URL}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: update
@@ -17,16 +17,16 @@ spring:
   application:
     name: whatsapp-rental-bot
 app:
-  shop-address: "No. 1, Paramulla Road, Matara"
+  shop-address: ${SHOP_ADDRESS}
 whatsapp:
-  phone-number-id: 769834166221609      # <--- replace with your phone_number_id
-  api-version: v24.0                    # use the API version you have (v24.0 or v25.0 etc.)
-  access-token: ${WHATSAPP_ACCESS_TOKEN:EAAWJzCZCSj3QBPpuZCUvMZAUM7IXK45KgqmiIG6H5n7TSSgZAgVcM0h7nrbmZA140PLKyfARYmOJ86ZBoyhGu6r47Q6kxqLaZAA0OdREyfYdZApupzHnoII5xIuAGfg2iMX1TrXUjpq29vXbaZA2fNdG5B7j6pYK9VzRZBhHoZA7qoTnijxDYMtp6Ob5BsDklVYaFSvdRRPytqZBwreUnInv9HMT1BzxoUPivzBQHsYqfUN1cFK1kKkNXZBK4irM9ZCXnp} # use env var in production
-  api-base-url: https://graph.facebook.com
+  phone-number-id: ${WHATSAPP_PHONE_NUMBER_ID}      # <--- replace with your phone_number_id
+  api-version: ${WHATSAPP_API_VERSION}          # use the API version you have (v24.0 or v25.0 etc.)
+  access-token: ${WHATSAPP_ACCESS_TOKEN} # use env var in production
+  api-base-url: ${WHATSAPP_API_BASE_URL}
 
 facebook:
   app:
     secret: ${FACEBOOK_APP_SECRET:}     # optional - for X-Hub-Signature-256 verification
 
 security:
-  verify-token: ${WHATSAPP_VERIFY_TOKEN:moto_verify_2025}
+  verify-token: ${WHATSAPP_VERIFY_TOKEN}

@@ -7,4 +7,6 @@ import java.util.Optional;
 
 public interface ChatSessionRepository extends JpaRepository<ChatSessionEntity, Long> {
     Optional<ChatSessionEntity> findByWaId(String waId);
+
+    void deleteByWaId(String from);
 }
