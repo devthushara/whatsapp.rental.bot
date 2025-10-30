@@ -3,11 +3,14 @@ package com.zoomigo.whatsapp.whatsapprentalbot.service;
 import com.zoomigo.whatsapp.whatsapprentalbot.entity.Bike;
 import com.zoomigo.whatsapp.whatsapprentalbot.entity.Booking;
 import com.zoomigo.whatsapp.whatsapprentalbot.entity.ChatSessionEntity;
+import com.zoomigo.whatsapp.whatsapprentalbot.entity.PromoCode;
 import com.zoomigo.whatsapp.whatsapprentalbot.entity.User;
 import com.zoomigo.whatsapp.whatsapprentalbot.repository.BikeRepository;
 import com.zoomigo.whatsapp.whatsapprentalbot.repository.BookingRepository;
 import com.zoomigo.whatsapp.whatsapprentalbot.repository.ChatSessionRepository;
+import com.zoomigo.whatsapp.whatsapprentalbot.repository.PromoCodeRepository;
 import com.zoomigo.whatsapp.whatsapprentalbot.repository.UserRepository;
+import com.zoomigo.whatsapp.whatsapprentalbot.repository.PromoCodeBikeRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -32,6 +35,8 @@ public class ConversationService {
     private final ChatSessionRepository chatSessionRepo;
     private final BookingRepository bookingRepo;
     private final SessionResetService sessionResetService;
+    private final PromoCodeRepository promoRepo;
+    private final PromoCodeBikeRepository promoBikeRepo;
     private final DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("dd MMM yyyy");
     @Value("${app.shop-address}")
     private String shopAddress;
@@ -39,17 +44,21 @@ public class ConversationService {
     public ConversationService(UserRepository userRepo, BikeRepository bikeRepo,
                                ChatSessionRepository chatSessionRepo,
                                SessionResetService sessionResetService,
-                               BookingRepository bookingRepo) {
+                               BookingRepository bookingRepo,
+                               PromoCodeRepository promoRepo,
+                               PromoCodeBikeRepository promoBikeRepo) {
         this.userRepo = userRepo;
         this.bikeRepo = bikeRepo;
         this.chatSessionRepo = chatSessionRepo;
         this.bookingRepo = bookingRepo;
         this.sessionResetService = sessionResetService;
+        this.promoRepo = promoRepo;
+        this.promoBikeRepo = promoBikeRepo;
     }
 
 
     public String handleMessage(String from, String text) {
-        text = text.trim();
+        text = text == null ? "" : text.trim();
         log.info("📨 Message from {}: '{}'", from, text);
 
         User user = userRepo.findByPhoneNumber(from)
@@ -64,10 +73,35 @@ public class ConversationService {
                 .orElseGet(() -> chatSessionRepo.save(new ChatSessionEntity(from, "START", new HashMap<>())));
 
         Map<String, Object> sessionData = readSessionData(session);
-        String stage = user.getStage();
+        if (sessionData == null) sessionData = new HashMap<>();
+        String origStage = user.getStage() == null ? "START" : user.getStage();
+        // Global guard: if user typed 'no' and either the user's stage or session state indicate promo flow,
+        // treat it as skipping promo. This covers timing/race differences between session and user stage.
+        if ("no".equalsIgnoreCase(text)) {
+            String sessState = session == null ? null : session.getState();
+            if ("ASK_PROMO".equalsIgnoreCase(origStage) || "ASK_PROMO".equalsIgnoreCase(sessState)) {
+                save(user, session, "CONFIRM_BIKE", sessionData);
+                return "No promo applied. Please confirm your booking: 1️⃣ Yes  2️⃣ No";
+            }
+        }
+        // If user explicitly replies 'no' while in ASK_PROMO, immediately treat it as 'skip promo'.
+        // (handled above globally)
+        String stage = origStage;
 
-        if(!"BOOKING_CONFIRMED".equals(stage)) {
-            // 🧨 Kill switch
+        // If user explicitly replied 'no' while in ASK_PROMO, honor that and don't override stage.
+        boolean userExplicitNo = "ASK_PROMO".equals(origStage) && text.equalsIgnoreCase("no");
+
+        // If session already contains a promo selection, treat the incoming message as CONFIRM_BIKE
+        // (this avoids races where user.stage is still ASK_PROMO but session was saved). However,
+        // if the user just typed 'no' while in ASK_PROMO, honor that explicit intent and keep ASK_PROMO.
+        if (!userExplicitNo && sessionData != null && (sessionData.containsKey("promoCodeId") || sessionData.containsKey("promoCode"))) {
+            stage = "CONFIRM_BIKE";
+        } else if ("ASK_PROMO".equals(stage) && ("1".equals(text) || "2".equals(text))) {
+            // user directly replied 1/2 while in ASK_PROMO -> treat as confirmation or reselect
+            stage = "CONFIRM_BIKE";
+        }
+
+        if (!"BOOKING_CONFIRMED".equals(stage)) {
             if (text.equalsIgnoreCase("cancel")) {
                 sessionResetService.resetUserAndSession(from);
                 return "❌ Your booking has been cancelled.\nYou can start a new one anytime by typing *Hi* 👋";
@@ -77,7 +111,6 @@ public class ConversationService {
         log.info("➡️ Stage: {}", stage);
 
         switch (stage) {
-
             case "START":
                 user.setStage("ASK_NAME");
                 save(user, session, "ASK_NAME", sessionData);
@@ -122,6 +155,16 @@ public class ConversationService {
                     save(user, session, "ASK_ADDRESS", sessionData);
                     return "Since you selected *home delivery*, please enter your *delivery address*.\n(If unsure, just type your nearest town name.)";
                 } else {
+                    String lower = text.toLowerCase(Locale.ENGLISH);
+                    if (lower.contains("pickup") || lower.contains("shop") || lower.contains("store")) {
+                        user.setPickupType("Pickup at shop");
+                        save(user, session, "ASK_BIKE", sessionData);
+                        return "Okay, pickup at shop noted. Proceeding to bike selection.";
+                    } else if (lower.contains("deliver") || lower.contains("home") || lower.contains("door")) {
+                        user.setPickupType("Home delivery");
+                        save(user, session, "ASK_ADDRESS", sessionData);
+                        return "Home delivery noted. Please enter your delivery address.";
+                    }
                     return "❌ Please reply with 1 or 2 to choose pickup method.";
                 }
                 // fallthrough
@@ -136,7 +179,18 @@ public class ConversationService {
                 List<Bike> availableBikes = bikeRepo.findByIsAvailableTrue();
                 if (availableBikes.isEmpty()) return "⚠️ Sorry, no bikes are available now.";
 
-                Map<String, Object> bikeMapRaw = (Map<String, Object>) sessionData.get("bikeMap");
+                Object bikeMapObj = sessionData.get("bikeMap");
+                Map<String, Object> bikeMapRaw = null;
+                if (bikeMapObj instanceof Map<?, ?>) {
+                    Map<?, ?> tmp = (Map<?, ?>) bikeMapObj;
+                    bikeMapRaw = new LinkedHashMap<>();
+                    for (Map.Entry<?, ?> en : tmp.entrySet()) {
+                        if (en.getKey() instanceof String) {
+                            bikeMapRaw.put((String) en.getKey(), en.getValue());
+                        }
+                    }
+                }
+
                 if (bikeMapRaw == null) {
                     bikeMapRaw = new LinkedHashMap<>();
                     StringBuilder list = new StringBuilder("🏍️ Available bikes:\n\n");
@@ -158,6 +212,31 @@ public class ConversationService {
                 }
 
                 if (!bikeMap.containsKey(text)) {
+                    String lower = text.toLowerCase(Locale.ENGLISH);
+                    for (Map.Entry<String, Long> e : bikeMap.entrySet()) {
+                        Bike b = bikeRepo.findById(e.getValue()).orElse(null);
+                        if (b == null) continue;
+                        String nameLower = b.getName() == null ? "" : b.getName().toLowerCase(Locale.ENGLISH);
+                        if (nameLower.equals(lower) || nameLower.contains(lower) || lower.contains(nameLower)) {
+                            user.setSelectedBikeId(b.getId());
+                            save(user, session, "CONFIRM_BIKE", sessionData);
+
+                            LocalDate endDate = user.getStartDate().plusDays(user.getDays());
+                            double total = b.getPricePerDay() * user.getDays();
+                            double deposit = b.getDeposit();
+                            String pickupMsg = user.getPickupType().equals("Pickup at shop")
+                                    ? "\n🏠 Shop address: *" + shopAddress + "*"
+                                    : "";
+
+                            return String.format(
+                                    "You selected *%s* for %d days (%s → %s).\nTotal: Rs%.2f + deposit Rs%.2f\n\nConfirm booking?\n1️⃣ Yes\n2️⃣ No%s",
+                                    b.getName(),
+                                    user.getDays(),
+                                    dateFormatter.format(user.getStartDate()),
+                                    dateFormatter.format(endDate),
+                                    total, deposit, pickupMsg);
+                        }
+                    }
                     return "❌ Invalid bike number. Please choose again.";
                 }
 
@@ -166,7 +245,7 @@ public class ConversationService {
                 if (selectedBike == null) return "❌ Invalid selection. Please choose again.";
 
                 user.setSelectedBikeId(selectedBikeId);
-                save(user, session, "CONFIRM_BIKE", sessionData);
+                save(user, session, "ASK_PROMO", sessionData);
 
                 LocalDate endDate = user.getStartDate().plusDays(user.getDays());
                 double total = selectedBike.getPricePerDay() * user.getDays();
@@ -176,71 +255,85 @@ public class ConversationService {
                         : "";
 
                 return String.format(
-                        "You selected *%s* for %d days (%s → %s).\nTotal: Rs%.2f + deposit Rs%.2f\n\nConfirm booking?\n1️⃣ Yes\n2️⃣ No%s",
+                        "You selected *%s* for %d days (%s → %s).\nTotal: Rs%.2f + deposit Rs%.2f\n\nDo you have a promo code? If yes, please type it now or reply 'no' to skip.\n\nConfirm booking?\n1️⃣ Yes\n2️⃣ No%s",
                         selectedBike.getName(),
                         user.getDays(),
                         dateFormatter.format(user.getStartDate()),
                         dateFormatter.format(endDate),
                         total, deposit, pickupMsg);
 
-            case "CONFIRM_BIKE":
-                if ("1".equalsIgnoreCase(text)) {
-                    // ✅ Confirm booking immediately
-                    Bike selectedBike2 = bikeRepo.findById(user.getSelectedBikeId()).orElse(null);
-                    if (selectedBike2 != null) {
-                        LocalDate endDate2 = user.getStartDate().plusDays(user.getDays());
-
-                        Booking booking = new Booking();
-                        booking.setWaId(user.getPhoneNumber());
-                        booking.setName(user.getName());
-                        booking.setBike(selectedBike2.getName());
-                        booking.setDuration(user.getDays());
-                        booking.setPrice(selectedBike2.getPricePerDay() * user.getDays());
-                        booking.setDeposit(selectedBike2.getDeposit());
-                        booking.setStatus("CONFIRMED");
-                        booking.setStartDate(user.getStartDate());
-                        booking.setEndDate(endDate2);
-                        booking.setPickupType(user.getPickupType());
-                        booking.setDeliveryAddress(user.getDeliveryAddress());
-                        booking.setCreatedAt(Instant.now());
-                        bookingRepo.save(booking);
-
-                        log.info("🧾 Booking CONFIRMED and saved for {}", user.getPhoneNumber());
-
-                        save(user, session, "BOOKING_CONFIRMED", sessionData);
-
-                        String pickupMsg2 = user.getPickupType().equals("Pickup at shop")
-                                ? "\n🏠 Pickup location: *" + shopAddress + "*"
-                                : "";
-
-                        double total2 = selectedBike2.getPricePerDay() * user.getDays();
-                        double deposit2 = selectedBike2.getDeposit();
-
-                        return String.format(
-                                "✅ Booking confirmed, %s! 🎉\n" +
-                                        "📅 *%s → %s*\n🏍️ *%s*\n💰 Rs%.2f + deposit Rs%.2f\n\n" +
-                                        "Please prepare your documents for verification:\n" +
-                                        "📸 Driver’s or international license\n📄 Passport & visa QR\n\n" +
-                                        "Our team will contact you soon to finalize pickup or delivery.%s\n\n" +
-                                        "💡 You can type *cancel* anytime to cancel your booking.",
-                                user.getName(),
-                                dateFormatter.format(user.getStartDate()),
-                                dateFormatter.format(endDate2),
-                                selectedBike2.getName(),
-                                total2,
-                                deposit2,
-                                pickupMsg2
-                        );
-                    }
-                    return "⚠️ Something went wrong saving your booking. Please try again.";
-                } else if ("2".equalsIgnoreCase(text)) {
-                    save(user, session, "ASK_BIKE", sessionData);
-                    return "No problem! Please choose another bike number.";
+            case "ASK_PROMO":
+                // If user explicitly says 'no' here (safety net), skip promo
+                if (text.equalsIgnoreCase("no")) {
+                    save(user, session, "CONFIRM_BIKE", sessionData);
+                    return "No promo applied. Please confirm your booking: 1️⃣ Yes  2️⃣ No";
                 }
-                return "❌ Please reply 1️⃣ to confirm or 2️⃣ to reselect.";
+                 // New behavior: user may either enter a promo code, or reply '1' to confirm, or '2' to choose another bike.
+                 if ("1".equals(text) || "2".equals(text)) {
+                     return handleConfirmOrReselect(user, session, sessionData, text);
+                 }
 
+                // If empty input, repeat the prompt without requiring a 'no' response
+                if (text.isBlank()) {
+                    save(user, session, "ASK_PROMO", sessionData);
+                    return "Do you have a promo code? If yes, type it now to apply it; or reply '1' to confirm the booking, '2' to choose another bike.";
+                }
 
-// 🔸 BOOKING_CONFIRMED
+                PromoCode promoCodeCandidate = promoRepo.findByCodeIgnoreCase(text).orElse(null);
+                if (promoCodeCandidate == null || !Boolean.TRUE.equals(promoCodeCandidate.getActive())) {
+                    return "⚠️ Promo code not found or inactive. Please try another code, reply '1' to confirm, or '2' to reselect the bike.";
+                }
+                int totalAllocSafe = promoCodeCandidate.getTotalAllocation() == null ? 0 : promoCodeCandidate.getTotalAllocation();
+                int usedCountSafe = promoCodeCandidate.getUsedCount() == null ? 0 : promoCodeCandidate.getUsedCount();
+                if (totalAllocSafe > 0 && usedCountSafe >= totalAllocSafe) {
+                    return "⚠️ This promo code has been fully used. Please try another code, reply '1' to confirm, or '2' to reselect the bike.";
+                }
+
+                // store promo choice in session (computed discount will be stored after we calculate it)
+                sessionData.put("promoCodeId", promoCodeCandidate.getId());
+                sessionData.put("promoCode", promoCodeCandidate.getCode());
+
+                // compute discount details to show user
+                Bike chosenBike = null;
+                if (user.getSelectedBikeId() != null) {
+                    chosenBike = bikeRepo.findById(user.getSelectedBikeId()).orElse(null);
+                }
+
+                int basePricePromo = 0;
+                int depositAmtPromo = 0;
+                if (chosenBike != null && user.getDays() != null) {
+                    basePricePromo = chosenBike.getPricePerDay() * user.getDays();
+                    depositAmtPromo = chosenBike.getDeposit();
+                }
+
+                // Determine discount: percentage takes precedence
+                int discountPromo = 0;
+                int finalPricePromo = basePricePromo;
+                if (promoCodeCandidate.getDiscountPercent() != null && promoCodeCandidate.getDiscountPercent() > 0) {
+                    discountPromo = (int) Math.round(basePricePromo * (promoCodeCandidate.getDiscountPercent() / 100.0));
+                    finalPricePromo = Math.max(0, basePricePromo - discountPromo);
+                } else {
+                    discountPromo = promoCodeCandidate.getDiscountAmount() == null ? 0 : promoCodeCandidate.getDiscountAmount();
+                    finalPricePromo = Math.max(0, basePricePromo - discountPromo);
+                }
+
+                // advance user's stage to confirmation (persist user.stage as well)
+                // store computed discount and final price in session to ensure the value
+                // shown to the user is the value persisted at confirmation (avoids recompute drift)
+                sessionData.put("promoAppliedDiscount", discountPromo);
+                sessionData.put("promoFinalPrice", finalPricePromo);
+                save(user, session, "CONFIRM_BIKE", sessionData);
+
+                String priceLine = "";
+                if (chosenBike != null) {
+                    priceLine = String.format("Discount: Rs%d. New total: Rs%d + deposit Rs%d\n\n", discountPromo, finalPricePromo, depositAmtPromo);
+                }
+
+                return String.format("✅ Promo '%s' applied. %sPlease reply '1' to confirm or '2' to choose another bike.", promoCodeCandidate.getCode(), priceLine);
+
+            case "CONFIRM_BIKE":
+                return handleConfirmOrReselect(user, session, sessionData, text);
+
             case "BOOKING_CONFIRMED":
                 if (text.equalsIgnoreCase("cancel")) {
                     save(user, session, "CANCEL_CONFIRM", sessionData);
@@ -251,8 +344,6 @@ public class ConversationService {
                 return "✅ Your booking is confirmed! Our team will contact you soon.\n" +
                         "💡 You can type *cancel* if you really wish to cancel this booking.";
 
-
-// 🔸 CANCEL_CONFIRM
             case "CANCEL_CONFIRM":
                 if ("1".equalsIgnoreCase(text)) {
                     Booking bookingToCancel = bookingRepo.findTopByWaIdOrderByCreatedAtDesc(user.getPhoneNumber())
@@ -264,18 +355,6 @@ public class ConversationService {
                         bookingRepo.save(bookingToCancel);
 
                         log.info("❌ Booking cancelled for user {}", user.getPhoneNumber());
-
-                        // ✅ Optional: Notify admin(s)
-            /*
-            List<String> adminNumbers = List.of("6598765432", "6587654321");
-            String alert = String.format(
-                "🚨 *Booking Cancelled!*\n👤 %s (%s)\n🏍️ %s\n📅 %s → %s",
-                bookingToCancel.getName(), bookingToCancel.getWaId(),
-                bookingToCancel.getBike(),
-                bookingToCancel.getStartDate(), bookingToCancel.getEndDate()
-            );
-            adminNumbers.forEach(num -> whatsappService.sendTextMessage(num, alert));
-            */
                     }
 
                     sessionResetService.resetUserAndSession(user.getPhoneNumber());
@@ -286,12 +365,8 @@ public class ConversationService {
                 }
                 return "❌ Please reply 1️⃣ to cancel or 2️⃣ to keep your booking.";
 
-
             default:
-                // Catch-all for any unexpected stage
-                return "🤖 Hmm, looks like something got mixed up.\n" +
-                        "Please type *Hi* to start a new booking or *cancel* to reset.";
-
+                return "🤖 Sorry, I didn't understand that. Please type *Hi* to start a booking or follow the prompts.";
         }
     }
 
@@ -299,22 +374,15 @@ public class ConversationService {
         if (text == null || text.isBlank()) return null;
 
         text = text.toLowerCase().trim();
-
-        // Handle 'today'
         if (text.equals("today")) return LocalDate.now();
-
-        // Remove ordinal suffixes like 1st, 2nd, 25th
         text = text.replaceAll("(\\d+)(st|nd|rd|th)", "$1");
 
-        // First try strict patterns (yyyy-M-d, d MMM, MMM d, etc.)
         LocalDate strictDate = tryStrictPatterns(text);
         if (strictDate != null) return strictDate;
 
-        // If strict parsing fails, try Natty
         try {
             Parser parser = new Parser();
             List<com.joestelmach.natty.DateGroup> groups = parser.parse(text);
-
             if (!groups.isEmpty()) {
                 Date date = groups.get(0).getDates().get(0);
                 return Instant.ofEpochMilli(date.getTime())
@@ -346,7 +414,8 @@ public class ConversationService {
                 String parseText = text;
                 if (appendYear) parseText += " " + Year.now().getValue();
                 return LocalDate.parse(parseText, formatter.withLocale(Locale.ENGLISH));
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
         }
         return null;
     }
@@ -376,5 +445,166 @@ public class ConversationService {
             log.error("⚠️ Failed to parse session JSON", e);
             return new HashMap<>();
         }
+    }
+
+    // Helper to centralize confirm (1) and reselect (2) logic.
+    private String handleConfirmOrReselect(User user, ChatSessionEntity session, Map<String, Object> sessionData, String text) {
+        // If user wants to confirm
+        if ("1".equalsIgnoreCase(text)) {
+            Bike selectedBike = null;
+            if (user.getSelectedBikeId() != null) selectedBike = bikeRepo.findById(user.getSelectedBikeId()).orElse(null);
+            if (selectedBike == null) return "⚠️ Something went wrong saving your booking. Please try again.";
+
+            LocalDate endDate = user.getStartDate().plusDays(user.getDays());
+            Booking booking = new Booking();
+            booking.setWaId(user.getPhoneNumber());
+            booking.setName(user.getName());
+            booking.setBike(selectedBike.getName());
+            booking.setDuration(user.getDays());
+            int basePrice = selectedBike.getPricePerDay() * user.getDays();
+            booking.setPrice(basePrice);
+            booking.setDeposit(selectedBike.getDeposit());
+
+            // apply promo if present in session (by id or code). Also verify bike applicability.
+            if (sessionData != null && (sessionData.containsKey("promoCodeId") || sessionData.containsKey("promoCode"))) {
+                PromoCode p = null;
+                if (sessionData.containsKey("promoCodeId")) {
+                    try {
+                        Long pid = ((Number) sessionData.get("promoCodeId")).longValue();
+                        p = promoRepo.findById(pid).orElse(null);
+                    } catch (Exception ignored) {
+                    }
+                }
+                if (p == null && sessionData.containsKey("promoCode")) {
+                    String code = String.valueOf(sessionData.get("promoCode"));
+                    p = promoRepo.findByCodeIgnoreCase(code).orElse(null);
+                }
+                if (p != null && Boolean.TRUE.equals(p.getActive())) {
+                    // verify if this promo is restricted to certain bikes
+                    boolean applicable = true;
+                    if (p.getId() != null) {
+                        var mappings = promoBikeRepo.findByPromoCode_Id(p.getId());
+                        if (mappings != null && !mappings.isEmpty()) {
+                            // if mappings exist, promo applies only to those bike ids
+                            Long selBikeId = selectedBike != null ? selectedBike.getId() : null;
+                            applicable = mappings.stream().anyMatch(m -> m.getBike() != null && Objects.equals(m.getBike().getId(), selBikeId));
+                        }
+                    }
+                    if (!applicable) {
+                        // promo doesn't apply to this bike; ignore it and log for audit
+                        log.info("➡️ Promo {} is not applicable to bike id {} — ignoring promo for booking", p.getCode(), selectedBike.getId());
+                    } else {
+                        // Prefer the discount computed earlier and stored in session (consistency)
+                        Integer appliedDiscount = null;
+                        Integer appliedFinal = null;
+                        if (sessionData.containsKey("promoAppliedDiscount") && sessionData.containsKey("promoFinalPrice")) {
+                            try {
+                                appliedDiscount = ((Number) sessionData.get("promoAppliedDiscount")).intValue();
+                                appliedFinal = ((Number) sessionData.get("promoFinalPrice")).intValue();
+                            } catch (Exception ignored) {
+                                appliedDiscount = null;
+                                appliedFinal = null;
+                            }
+                        }
+
+                        // Diagnostic logs: show what is stored in session and initial computed vars
+                        try {
+                            log.info("➡️ Session promoAppliedDiscount={}, promoFinalPrice={}", sessionData.get("promoAppliedDiscount"), sessionData.get("promoFinalPrice"));
+                        } catch (Exception e) {
+                            log.warn("⚠️ Failed to read promo values from session: {}", e.getMessage());
+                        }
+
+                        // Fallback: recompute if session values missing
+                        if (appliedDiscount == null) {
+                            int flat = p.getDiscountAmount() == null ? 0 : p.getDiscountAmount();
+                            appliedDiscount = flat;
+                            appliedFinal = Math.max(0, basePrice - appliedDiscount);
+                            if (p.getDiscountPercent() != null && p.getDiscountPercent() > 0) {
+                                appliedDiscount = (int) Math.round(basePrice * (p.getDiscountPercent() / 100.0));
+                                appliedFinal = Math.max(0, basePrice - appliedDiscount);
+                            }
+                        }
+
+                        log.info("➡️ Computed appliedDiscount={}, appliedFinal={} for promo {} and basePrice={}", appliedDiscount, appliedFinal, p.getCode(), basePrice);
+
+                        booking.setPrice(appliedFinal);
+                        booking.setPromoCode(p);
+                        booking.setPromoApplied(true);
+                        booking.setPromoDiscountAmount(appliedDiscount);
+
+                        p.setUsedCount((p.getUsedCount() == null ? 0 : p.getUsedCount()) + 1);
+                        promoRepo.save(p);
+                     }
+                 }
+             }
+
+            booking.setStatus("CONFIRMED");
+            booking.setStartDate(user.getStartDate());
+            booking.setEndDate(endDate);
+            booking.setPickupType(user.getPickupType());
+            booking.setDeliveryAddress(user.getDeliveryAddress());
+            booking.setCreatedAt(Instant.now());
+            bookingRepo.save(booking);
+
+            log.info("🧾 Booking CONFIRMED and saved for {}", user.getPhoneNumber());
+
+            // Clear promo entries from session after successful booking to avoid reuse or accidental auto-apply
+            if (sessionData != null) {
+                if (sessionData.containsKey("promoCodeId") || sessionData.containsKey("promoCode") || sessionData.containsKey("promoAppliedDiscount") || sessionData.containsKey("promoFinalPrice")) {
+                    sessionData.remove("promoCodeId");
+                    sessionData.remove("promoCode");
+                    sessionData.remove("promoAppliedDiscount");
+                    sessionData.remove("promoFinalPrice");
+                    log.info("➡️ Cleared promo from session for user {} after booking confirmation", user.getPhoneNumber());
+                }
+            }
+
+            // persist updated user stage and cleared session
+            save(user, session, "BOOKING_CONFIRMED", sessionData);
+
+            String pickupMsg = user.getPickupType().equals("Pickup at shop") ? "\n🏠 Pickup location: *" + shopAddress + "*" : "";
+            double total = booking.getPrice();
+            double deposit = booking.getDeposit();
+
+            String promoMsg = "";
+            if (booking.getPromoApplied() != null && booking.getPromoApplied() && booking.getPromoCode() != null) {
+                int applied = booking.getPromoDiscountAmount() == null ? 0 : booking.getPromoDiscountAmount();
+                promoMsg = "\n\nPromo applied: " + booking.getPromoCode().getCode() + " - Rs" + applied +
+                        String.format("\nNew total: Rs%.2f + deposit Rs%.2f", (double) booking.getPrice(), (double) deposit);
+            }
+
+            return String.format(
+                    "✅ Booking confirmed, %s! 🎉\n" +
+                            "📅 *%s → %s*\n🏍️ *%s*\n💰 Rs%.2f + deposit Rs%.2f%s\n\n" +
+                            "Please prepare your documents for verification:\n" +
+                            "📸 Driver’s or international license\n📄 Passport & visa QR\n\n" +
+                            "Our team will contact you soon to finalize pickup or delivery.%s\n\n" +
+                            "💡 You can type *cancel* anytime to cancel your booking.",
+                    user.getName(),
+                    dateFormatter.format(user.getStartDate()),
+                    dateFormatter.format(endDate),
+                    selectedBike.getName(),
+                    total,
+                    deposit,
+                    promoMsg,
+                    pickupMsg
+            );
+        }
+
+        // If user wants to reselect, clear promo from session so new bike selection won't auto-confirm.
+        if ("2".equalsIgnoreCase(text)) {
+            // user chose to reselect; clear any previously chosen promo so it won't auto-apply
+            if (sessionData != null) {
+                sessionData.remove("promoCodeId");
+                sessionData.remove("promoCode");
+                sessionData.remove("promoAppliedDiscount");
+                sessionData.remove("promoFinalPrice");
+                log.info("➡️ User {} reselected bike — cleared promo from session", user.getPhoneNumber());
+            }
+            save(user, session, "ASK_BIKE", sessionData);
+            return "No problem! Please choose another bike number.";
+        }
+
+        return "❌ Please reply 1️⃣ to confirm or 2️⃣ to reselect.";
     }
 }
