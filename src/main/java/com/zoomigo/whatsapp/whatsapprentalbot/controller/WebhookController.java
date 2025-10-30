@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -17,12 +18,14 @@ public class WebhookController {
 
     private final ConversationService chatService;
     private final WhatsappService whatsappService;
+    private final ThreadPoolTaskExecutor conversationExecutor;
     @Value("${security.verify-token}")
     private String VERIFY_TOKEN;
 
-    public WebhookController(ConversationService chatService, WhatsappService whatsappService) {
+    public WebhookController(ConversationService chatService, WhatsappService whatsappService, ThreadPoolTaskExecutor conversationExecutor) {
         this.chatService = chatService;
         this.whatsappService = whatsappService;
+        this.conversationExecutor = conversationExecutor;
     }
 
     @GetMapping
@@ -64,9 +67,17 @@ public class WebhookController {
                 String text = (String) textObj.get("body");
                 log.info("💬 [{}] {}", from, text);
 
-                String reply = chatService.handleMessage(from, text);
-                whatsappService.sendTextMessage(from, reply);
-                log.info("✅ Reply sent to {}: {}", from, reply);
+                // offload to conversation executor so controller returns fast
+                conversationExecutor.execute(() -> {
+                    try {
+                        String reply = chatService.handleMessage(from, text);
+                        whatsappService.sendTextMessage(from, reply);
+                        log.info("✅ Reply sent to {}: {}", from, reply);
+                    } catch (Exception e) {
+                        log.error("❌ Error processing message for {}: {}", from, e.getMessage(), e);
+                    }
+                });
+
             } else {
                 log.info("ℹ️ Unsupported message type: {}", type);
             }

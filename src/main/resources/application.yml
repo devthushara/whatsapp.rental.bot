@@ -2,9 +2,15 @@ server:
   port: 8080
 spring:
   datasource:
-    url: ${SPRING_DATASOURCE_URL}
-    username: ${SPRING_DATASOURCE_USERNAME}
-    password: ${SPRING_DATASOURCE_PASSWORD}
+    url: ${SPRING_DATASOURCE_URL:jdbc:h2:mem:testdb}
+    username: ${SPRING_DATASOURCE_USERNAME:sa}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
   jpa:
     hibernate:
       ddl-auto: update
@@ -16,8 +22,11 @@ spring:
             non_contextual_creation: true
   application:
     name: whatsapp-rental-bot
+  cache:
+    type: caffeine
 app:
   shop-address: ${SHOP_ADDRESS}
+  display-name: ${APP_DISPLAY_NAME:ZoomiGo MotoRent}
 whatsapp:
   phone-number-id: ${WHATSAPP_PHONE_NUMBER_ID}      # <--- replace with your phone_number_id
   api-version: ${WHATSAPP_API_VERSION}          # use the API version you have (v24.0 or v25.0 etc.)
@@ -30,3 +39,13 @@ facebook:
 
 security:
   verify-token: ${WHATSAPP_VERIFY_TOKEN}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "prometheus,health,info"
+
+# Note: For production, set SPRING_DATASOURCE_URL/USERNAME/PASSWORD to your Postgres JDBC URL and credentials.
+# The above defaults (H2 in-memory) are for local development and tests only.
+

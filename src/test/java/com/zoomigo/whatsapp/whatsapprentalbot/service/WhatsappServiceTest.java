@@ -7,7 +7,7 @@ class WhatsappServiceTest {
     @Test
     void sendTextMessage_noException() {
         WhatsappService svc = new WhatsappService();
-        // Intentionally call with invalid config; method should catch exceptions and not throw
+        // Should not throw even when WebClient is null and config may be missing
         svc.sendTextMessage("000", "Hello");
     }
 }
