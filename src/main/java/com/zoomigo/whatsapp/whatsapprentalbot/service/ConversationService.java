@@ -164,6 +164,19 @@ public class ConversationService {
 
         log.info("➡️ Stage: {}", stage);
 
+        // Do not remap a literal 'cancel' - we want the switch to handle it specially
+        boolean isLiteralCancel = "cancel".equalsIgnoreCase(text);
+
+        // Map free-form replies (like 'pick up at shop', 'pickup at store', 'yes', 'no') to numeric choices where possible
+        String mappedChoice = null;
+        if (!isLiteralCancel) {
+            mappedChoice = mapToChoice(stage, text);
+            if (mappedChoice != null) {
+                log.info("🧭 Mapped freeform '{}' -> choice '{}' for stage {}", text, mappedChoice, stage);
+                text = mappedChoice;
+            }
+        }
+
         switch (stage) {
             case "START":
                 user.setStage("ASK_NAME");
@@ -204,6 +217,8 @@ public class ConversationService {
                 if ("1".equals(text)) {
                     user.setPickupType("Pickup at shop");
                     save(user, session, "ASK_BIKE", sessionData);
+                    // build and return bike list (same flow as ASK_BIKE initial list)
+                    return buildBikeListAndPersist(session, sessionData, user, true);
                 } else if ("2".equals(text)) {
                     user.setPickupType("Home delivery");
                     save(user, session, "ASK_ADDRESS", sessionData);
@@ -213,7 +228,8 @@ public class ConversationService {
                     if (lower.contains("pickup") || lower.contains("shop") || lower.contains("store")) {
                         user.setPickupType("Pickup at shop");
                         save(user, session, "ASK_BIKE", sessionData);
-                        return "Okay, pickup at shop noted. Proceeding to bike selection.";
+                        // produce bike list same as above
+                        return buildBikeListAndPersist(session, sessionData, user, true);
                     } else if (lower.contains("deliver") || lower.contains("home") || lower.contains("door")) {
                         user.setPickupType("Home delivery");
                         save(user, session, "ASK_ADDRESS", sessionData);
@@ -231,7 +247,9 @@ public class ConversationService {
 
             case "ASK_BIKE":
                 List<Bike> availableBikes = getAvailableBikes();
-                if (availableBikes.isEmpty()) return "⚠️ Sorry, no bikes are available now.";
+                if (availableBikes.isEmpty()) {
+                    return "⚠️ Sorry, no bikes are available now.";
+                }
 
                 Object bikeMapObj = sessionData.get("bikeMap");
                 Map<String, Object> bikeMapRaw = null;
@@ -285,7 +303,7 @@ public class ConversationService {
                             LocalDate endDate = user.getStartDate().plusDays(user.getDays());
                             double total = b.getPricePerDay() * user.getDays();
                             double deposit = b.getDeposit();
-                            String pickupMsg = user.getPickupType().equals("Pickup at shop")
+                            String pickupMsg = "Pickup at shop".equals(user.getPickupType())
                                     ? "\n🏠 Shop address: *" + shopAddress + "*"
                                     : "";
 
@@ -318,9 +336,7 @@ public class ConversationService {
                 LocalDate endDate = user.getStartDate().plusDays(user.getDays());
                 double total = selectedBike.getPricePerDay() * user.getDays();
                 double deposit = selectedBike.getDeposit();
-                String pickupMsg = user.getPickupType().equals("Pickup at shop")
-                        ? "\n🏠 Shop address: *" + shopAddress + "*"
-                        : "";
+                String pickupMsg = "Pickup at shop".equals(user.getPickupType()) ? "\n🏠 Pickup location: *" + shopAddress + "*" : "";
 
                 return String.format(
                         "You selected *%s* for %d days (%s → %s).\nTotal: Rs%.2f + deposit Rs%.2f\n\nDo you have a promo code? If yes, type it now to apply it; or reply '1' to confirm the booking, '2' to choose another bike.\n\nConfirm booking?\n1️⃣ Yes\n2️⃣ No%s",
@@ -491,15 +507,22 @@ public class ConversationService {
     private void save(User user, ChatSessionEntity session, String nextState, Map<String, Object> sessionData) {
         user.setStage(nextState);
         userRepo.save(user);
-        saveSession(session, nextState, sessionData);
+        // pass the user's phone number (waId) so placeholder sessions use the correct waId
+        saveSession(session, nextState, sessionData, user.getPhoneNumber());
     }
 
+    // backward-compatible overload
     private void saveSession(ChatSessionEntity session, String nextState, Map<String, Object> sessionData) {
+        saveSession(session, nextState, sessionData, null);
+    }
+
+    private void saveSession(ChatSessionEntity session, String nextState, Map<String, Object> sessionData, String waId) {
         try {
             if (session == null) {
                 // create a minimal placeholder so we don't get NPEs in tests where repository mocks return null
-                log.warn("⚠️ saveSession called with null session - creating placeholder session");
-                session = new ChatSessionEntity("unknown", nextState, sessionData == null ? new HashMap<>() : sessionData);
+                String idToUse = waId == null ? "unknown" : waId;
+                log.warn("⚠️ saveSession called with null session - creating placeholder session for {}", idToUse);
+                session = new ChatSessionEntity(idToUse, nextState, sessionData == null ? new HashMap<>() : sessionData);
             }
             session.setState(nextState);
             session.setDataJson(sessionData);
@@ -514,11 +537,63 @@ public class ConversationService {
         try {
             if (session == null) return new HashMap<>();
             if (session.getDataJson() == null) return new HashMap<>();
-            return session.getDataJson();
+            // Return a mutable copy to avoid UnsupportedOperationException when original map is immutable (e.g., Map.of in tests)
+            return new LinkedHashMap<>(session.getDataJson());
         } catch (Exception e) {
             log.error("⚠️ Failed to parse session JSON", e);
             return new HashMap<>();
         }
+    }
+
+    // Helper: normalize input text
+    private String normalize(String text) {
+        if (text == null) return "";
+        return text.toLowerCase(Locale.ENGLISH).replaceAll("[\\p{Punct}]", " ").replaceAll("\\s+", " ").trim();
+    }
+
+    // Helper: detect pickup intention
+    private boolean detectsPickup(String text) {
+        String t = normalize(text);
+        if (t.matches(".*\\bpick(?:-| )?up\\b.*")) return true; // pickup, pick up, pick-up
+        if (t.contains("shop") || t.contains("store")) return true;
+        if (t.matches(".*\\bcollect\\b.*")) return true;
+        return false;
+    }
+
+    // Helper: detect delivery intention
+    private boolean detectsDelivery(String text) {
+        String t = normalize(text);
+        if (t.contains("delivery") || t.contains("deliver") || t.contains("home") || t.contains("door")) return true;
+        return false;
+    }
+
+    // Map free-form replies into choice '1'|'2' when possible. Context-aware for ASK_PICKUP vs confirm stages.
+    private String mapToChoice(String stage, String text) {
+        String t = normalize(text);
+        if (t.isBlank()) return null;
+        // numeric first
+        if (t.equals("1") || t.equals("2")) return t;
+
+        // yes/no synonyms
+        Set<String> yes = Set.of("yes", "y", "ya", "sure", "ok", "okay", "yeah", "yep", "confirm");
+        Set<String> no = Set.of("no", "n", "nah", "nope", "not");
+
+        if ("ASK_PICKUP".equals(stage)) {
+            if (detectsPickup(t)) return "1";
+            if (detectsDelivery(t)) return "2";
+            if (yes.contains(t)) return "1"; // treat yes as pickup by default in pickup context
+            if (no.contains(t)) return "2"; // treat no as delivery in pickup context
+        } else {
+            // Only map yes/no for confirmation-like stages, not for ASK_PROMO or free-form promo entry
+            if ("CONFIRM_BIKE".equals(stage) || "BOOKING_CONFIRMED".equals(stage) || "CANCEL_CONFIRM".equals(stage)) {
+                if (yes.contains(t)) return "1";
+                if (no.contains(t)) return "2";
+                // also handle phrases like 'confirm', 'reselect'
+                if (t.contains("confirm") || t.contains("confirm booking") || t.contains("confirm please")) return "1";
+                if (t.contains("reselect") || t.contains("choose another") || t.contains("choose another bike") || t.contains("change")) return "2";
+            }
+        }
+        return null;
     }
 
     // Helper to centralize confirm (1) and reselect (2) logic.
@@ -638,7 +713,7 @@ public class ConversationService {
             // persist updated user stage and cleared session
             save(user, session, "BOOKING_CONFIRMED", sessionData);
 
-            String pickupMsg = user.getPickupType().equals("Pickup at shop") ? "\n🏠 Pickup location: *" + shopAddress + "*" : "";
+            String pickupMsg = "Pickup at shop".equals(user.getPickupType()) ? "\n🏠 Pickup location: *" + shopAddress + "*" : "";
             double total = booking.getPrice();
             double deposit = booking.getDeposit();
 
@@ -646,7 +721,7 @@ public class ConversationService {
             if (booking.getPromoApplied() != null && booking.getPromoApplied() && booking.getPromoCode() != null) {
                 int applied = booking.getPromoDiscountAmount() == null ? 0 : booking.getPromoDiscountAmount();
                 promoMsg = "\n\nPromo applied: " + booking.getPromoCode().getCode() + " - Rs" + applied +
-                        String.format("\nNew total: Rs%.2f + deposit Rs%.2f", (double) booking.getPrice(), (double) deposit);
+                        String.format("\nNew total: Rs%.2f + deposit Rs%.2f", (double) booking.getPrice(), deposit);
             }
 
             return String.format(
@@ -681,5 +756,37 @@ public class ConversationService {
         }
 
         return "❌ Please reply 1️⃣ to confirm or 2️⃣ to reselect.";
+    }
+
+    // Helper to build bike list string, persist bikeMap in session and return list text
+    private String buildBikeListAndPersist(ChatSessionEntity session, Map<String, Object> sessionData, User user) {
+        return buildBikeListAndPersist(session, sessionData, user, false);
+    }
+
+    private String buildBikeListAndPersist(ChatSessionEntity session, Map<String, Object> sessionData, User user, boolean invokedFromPickup) {
+        List<Bike> availableBikes = getAvailableBikes();
+        if (availableBikes.isEmpty()) {
+            // still persist an empty bikeMap so subsequent flows can populate or tests can stub it
+            sessionData.put("bikeMap", new LinkedHashMap<>());
+            saveSession(session, "ASK_BIKE", sessionData, user == null ? null : user.getPhoneNumber());
+            // If invoked from pickup flow, return the pickup acknowledgement; otherwise return no-bikes message.
+            if (invokedFromPickup) {
+                return "Okay, pickup at shop noted. Proceeding to bike selection.";
+            }
+            return "⚠️ Sorry, no bikes are available now.";
+        }
+
+        Map<String, Object> bikeMapRaw = new LinkedHashMap<>();
+        StringBuilder list = new StringBuilder("🏍️ Available bikes:\n\n");
+        for (int i = 0; i < availableBikes.size(); i++) {
+            Bike b = availableBikes.get(i);
+            String id = String.valueOf(i + 1);
+            bikeMapRaw.put(id, b.getId());
+            list.append(id).append(". ").append(b.getName())
+                    .append(" - Rs.").append(b.getPricePerDay()).append("/day\n");
+        }
+        sessionData.put("bikeMap", bikeMapRaw);
+        saveSession(session, "ASK_BIKE", sessionData, user == null ? null : user.getPhoneNumber());
+        return list + "\nPlease reply with the *bike number* to continue.";
     }
 }
