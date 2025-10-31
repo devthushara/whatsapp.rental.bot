@@ -408,12 +408,12 @@ public class ConversationService {
                 sessionData.put("promoFinalPrice", finalPricePromo);
                 save(user, session, "CONFIRM_BIKE", sessionData);
 
-                String priceLine = "";
+                String promoPriceLine = "";
                 if (chosenBike != null) {
-                    priceLine = String.format("Discount: Rs%d. New total: Rs%d + deposit Rs%d\n\n", discountPromo, finalPricePromo, depositAmtPromo);
+                    promoPriceLine = String.format("Discount: Rs%d. New total: Rs%d + deposit Rs%d\n\n", discountPromo, finalPricePromo, depositAmtPromo);
                 }
 
-                return String.format("✅ Promo '%s' applied. %sPlease reply '1' to confirm or '2' to choose another bike.", promoCodeCandidate.getCode(), priceLine);
+                return String.format("✅ Promo '%s' applied. %sPlease reply '1' to confirm or '2' to choose another bike.", promoCodeCandidate.getCode(), promoPriceLine);
 
             case "CONFIRM_BIKE":
                 return handleConfirmOrReselect(user, session, sessionData, text);
@@ -444,8 +444,62 @@ public class ConversationService {
                     sessionResetService.resetUserAndSession(user.getPhoneNumber());
                     return "✅ Your booking has been cancelled.\nYou can start a new one anytime by typing *Hi* 👋";
                 } else if ("2".equalsIgnoreCase(text)) {
+                    // Keep booking active and return a contextual summary based on latest booking/user data
                     save(user, session, "BOOKING_CONFIRMED", sessionData);
-                    return "✅ Your booking remains active.\nWe’ll contact you soon for pickup or delivery.";
+
+                    Booking latest = bookingRepo.findTopByWaIdOrderByCreatedAtDesc(user.getPhoneNumber()).orElse(null);
+                    StringBuilder msg = new StringBuilder("✅ Your booking remains active.");
+
+                    if (latest != null) {
+                        String bike = latest.getBike() == null ? "your bike" : latest.getBike();
+                        String dates = "";
+                        try {
+                            if (latest.getStartDate() != null && latest.getEndDate() != null) {
+                                dates = String.format(" 📅 *%s → %s*", dateFormatter.format(latest.getStartDate()), dateFormatter.format(latest.getEndDate()));
+                            }
+                        } catch (Exception ignored) { }
+
+                        // price and deposit
+                        String priceLine = "";
+                        try {
+                            double priceLatest = latest.getPrice();
+                            double depositLatest = latest.getDeposit();
+                            priceLine = String.format("\n💰 Rs%.2f + deposit Rs%.2f", priceLatest, depositLatest);
+                        } catch (Exception ignored) { }
+
+                        msg.append(String.format(" We’ll contact you soon to finalise pickup/delivery for %s.%s%s", bike, dates, priceLine));
+
+                        // Promo info
+                        if (latest.getPromoApplied() != null && latest.getPromoApplied() && latest.getPromoCode() != null) {
+                            int applied = latest.getPromoDiscountAmount() == null ? 0 : latest.getPromoDiscountAmount();
+                            msg.append(String.format("\n\nPromo applied: %s - Rs%d", latest.getPromoCode().getCode(), applied));
+                        }
+
+                        // Pickup/Delivery specifics
+                        if ("Pickup at shop".equalsIgnoreCase(latest.getPickupType()) || "Pickup at shop".equalsIgnoreCase(user.getPickupType())) {
+                            msg.append(String.format("\n\n🏠 Pickup location: *%s*", shopAddress == null ? "the shop" : shopAddress));
+                            msg.append("\nWe will message you when the booking is ready for pickup.");
+                        } else if (latest.getDeliveryAddress() != null && !latest.getDeliveryAddress().isBlank()) {
+                            msg.append(String.format("\n\n🚚 Delivery address: *%s*", latest.getDeliveryAddress()));
+                            msg.append("\nOur delivery team will contact you to arrange a convenient time.");
+                        } else if (user.getDeliveryAddress() != null && !user.getDeliveryAddress().isBlank()) {
+                            msg.append(String.format("\n\n🚚 Delivery address: *%s*", user.getDeliveryAddress()));
+                            msg.append("\nOur delivery team will contact you to arrange a convenient time.");
+                        } else {
+                            msg.append("\n\nWe will contact you to confirm pickup or delivery details soon.");
+                        }
+                    } else {
+                        // fallback to user's stored pickup/delivery info
+                        if ("Pickup at shop".equalsIgnoreCase(user.getPickupType())) {
+                            msg.append(String.format(" We’ll contact you soon to finalise pickup at *%s*.", shopAddress == null ? "the shop" : shopAddress));
+                        } else if (user.getDeliveryAddress() != null && !user.getDeliveryAddress().isBlank()) {
+                            msg.append(String.format(" We’ll contact you soon to finalise delivery to *%s*.", user.getDeliveryAddress()));
+                        } else {
+                            msg.append(" We’ll contact you soon for pickup or delivery.");
+                        }
+                    }
+
+                    return msg.toString();
                 }
                 return "❌ Please reply 1️⃣ to cancel or 2️⃣ to keep your booking.";
 
