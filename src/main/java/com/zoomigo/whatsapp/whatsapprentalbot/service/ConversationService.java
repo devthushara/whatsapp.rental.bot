@@ -373,6 +373,13 @@ public class ConversationService {
                     return "⚠️ This promo code has been fully used. Please try another code, reply '1' to confirm, or '2' to reselect the bike.";
                 }
 
+                // NOTE: accept the promo code at this stage (show 'applied' to user) even if promo is bike-specific.
+                // Final applicability check will be enforced at confirmation time to avoid confusing UX.
+                // If promo has bike-specific mappings and it doesn't apply to selected bike, reject now
+                if (!promoAppliesToBike(promoCodeCandidate, user.getSelectedBikeId())) {
+                    return "⚠️ This promo code does not apply to the bike you selected. Please try another code, reply '1' to confirm, or '2' to reselect the bike.";
+                }
+
                 // store promo choice in session (computed discount will be stored after we calculate it)
                 sessionData.put("promoCodeId", promoCodeCandidate.getId());
                 sessionData.put("promoCode", promoCodeCandidate.getCode());
@@ -843,4 +850,37 @@ public class ConversationService {
         saveSession(session, "ASK_BIKE", sessionData, user == null ? null : user.getPhoneNumber());
         return list + "\nPlease reply with the *bike number* to continue.";
     }
+
+    // Helper to check whether a promo applies to a particular bike id (or globally if no mappings exist)
+    private boolean promoAppliesToBike(PromoCode promo, Long bikeId) {
+        if (promo == null) return false;
+        try {
+            List<?> mappings = Collections.emptyList();
+            if (promo.getId() != null) {
+                mappings = promoBikeRepo.findByPromoCode_Id(promo.getId());
+            }
+            // fallback: some tests/mocks may set up mapping lookup by code
+            if ((mappings == null || mappings.isEmpty()) && promo.getCode() != null) {
+                mappings = promoBikeRepo.findByPromoCode_CodeIgnoreCase(promo.getCode());
+            }
+            if (mappings == null || mappings.isEmpty()) {
+                // no mappings => promo is global
+                return true;
+            }
+            if (bikeId == null) return false;
+            for (Object o : mappings) {
+                try {
+                    // PromoCodeBike type has getBike().getId()
+                    com.zoomigo.whatsapp.whatsapprentalbot.entity.PromoCodeBike m = (com.zoomigo.whatsapp.whatsapprentalbot.entity.PromoCodeBike) o;
+                    if (m.getBike() != null && Objects.equals(m.getBike().getId(), bikeId)) return true;
+                } catch (ClassCastException ignored) {
+                }
+            }
+            return false;
+         } catch (Exception e) {
+             log.warn("⚠️ Failed to check promo mappings for promo {}: {}", promo == null ? "(null)" : promo.getCode(), e.getMessage());
+             return false;
+         }
+     }
+
 }

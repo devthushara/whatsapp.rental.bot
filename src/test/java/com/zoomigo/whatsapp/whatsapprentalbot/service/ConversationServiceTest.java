@@ -484,8 +484,8 @@ class ConversationServiceTest {
         // go to promo stage
         u.setStage("ASK_PROMO"); when(userRepo.findByPhoneNumber("up2")).thenReturn(Optional.of(u));
         String r2 = service.handleMessage("up2", "BIKEONLY");
-        // since promo applied message is shown, but when confirming it should be ignored because mapping doesn't match
-        assertThat(r2).contains("applied");
+        // promo entered but mapping doesn't match selected bike — user should be informed it does not apply
+        assertThat(r2).contains("does not apply");
 
         u.setStage("CONFIRM_BIKE"); when(userRepo.findByPhoneNumber("up2")).thenReturn(Optional.of(u));
         when(promoRepo.findById(20L)).thenReturn(Optional.of(pc));
