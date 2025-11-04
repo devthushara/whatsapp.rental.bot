@@ -2,15 +2,9 @@ server:
   port: 8080
 spring:
   datasource:
-    #url: ${SPRING_DATASOURCE_URL:jdbc:h2:mem:testdb}
-    #username: ${SPRING_DATASOURCE_USERNAME:sa}
-    #password: ${SPRING_DATASOURCE_PASSWORD:}
-    #url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://dpg-d3rlplc9c44c73aqjfe0-a.singapore-postgres.render.com/postgres_lope}
-    #username: ${SPRING_DATASOURCE_USERNAME:postgres_lope_user}
-    #password: ${SPRING_DATASOURCE_PASSWORD:hYIeGpdSA5wT5F8AkI2BgFeIyrv4GDHW}
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://db.izzzekytstffifmvoxoz.supabase.co:5432/postgres}
-    username: ${SPRING_DATASOURCE_USERNAME:postgres}
-    password: ${SPRING_DATASOURCE_PASSWORD:ED%@zsR6FadXa4S}
+    url: ${SPRING_DATASOURCE_URL:jdbc:h2:mem:testdb}
+    username: ${SPRING_DATASOURCE_USERNAME:sa}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
     hikari:
       maximum-pool-size: 20
       minimum-idle: 5
@@ -31,29 +25,26 @@ spring:
   cache:
     type: caffeine
 app:
-  shop-address: "No. 1, Paramulla Road, Matara"
-  display-name: ${APP_DISPLAY_NAME:rideXhub MotoRent}
+  shop-address: ${SHOP_ADDRESS}
+  display-name: ${APP_DISPLAY_NAME:ZoomiGo MotoRent}
 whatsapp:
-  phone-number-id: 769834166221609      # <--- replace with your phone_number_id
-  api-version: v24.0                    # use the API version you have (v24.0 or v25.0 etc.)
-  access-token: ${WHATSAPP_ACCESS_TOKEN:EAAWJzCZCSj3QBP8wFfiQLjxTdRCq0o6iGC7W2ZAmPzaUl9NRHxJ6VOqwBilui9EejRdDVaZARNtZAuOfm8l0K2LbY6qxAdaXYkCZBv780XKSWHZAjRA9f3byII6ZCZBRncfvgyRh9RtzJoo9tvEZAl95Nr6k9xU4AsLYXmOXUmjZBKeHiBGG1cyVvYSwPU7yDPwyyWogZDZD} # use env var in production
-  api-base-url: https://graph.facebook.com
+  phone-number-id: ${WHATSAPP_PHONE_NUMBER_ID}      # <--- replace with your phone_number_id
+  api-version: ${WHATSAPP_API_VERSION}          # use the API version you have (v24.0 or v25.0 etc.)
+  access-token: ${WHATSAPP_ACCESS_TOKEN} # use env var in production
+  api-base-url: ${WHATSAPP_API_BASE_URL}
 
 facebook:
   app:
     secret: ${FACEBOOK_APP_SECRET:}     # optional - for X-Hub-Signature-256 verification
 
 security:
-  verify-token: ${WHATSAPP_VERIFY_TOKEN:moto_verify_2025}
-ollama:
-  host: http://localhost:11434  # or any remote endpoint
-  model: llama3.2:1b
+  verify-token: ${WHATSAPP_VERIFY_TOKEN}
 
 management:
   endpoints:
     web:
       exposure:
         include: "prometheus,health,info"
-# webhooks
-# local : https://veiledly-epigenous-lidia.ngrok-free.dev/webhook
-# render : https://whatsapp-rental-bot.onrender.com/webhook
+
+# Note: For production, set SPRING_DATASOURCE_URL/USERNAME/PASSWORD to your Postgres JDBC URL and credentials.
+# The above defaults (H2 in-memory) are for local development and tests only.
