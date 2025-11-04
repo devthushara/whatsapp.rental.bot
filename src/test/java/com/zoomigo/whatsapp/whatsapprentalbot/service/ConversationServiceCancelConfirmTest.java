@@ -52,8 +52,8 @@ public class ConversationServiceCancelConfirmTest {
 
         Booking latest = new Booking();
         latest.setBike("Yamaha XSR 155");
-        latest.setStartDate(LocalDate.of(2025,11,1));
-        latest.setEndDate(LocalDate.of(2025,11,5));
+        latest.setStartDate(LocalDate.of(2025, 11, 1));
+        latest.setEndDate(LocalDate.of(2025, 11, 5));
         latest.setPrice(10240);
         latest.setDeposit(20000);
         latest.setPickupType("Pickup at shop");

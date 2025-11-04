@@ -1,15 +1,7 @@
 package com.zoomigo.whatsapp.whatsapprentalbot.service;
 
-import com.zoomigo.whatsapp.whatsapprentalbot.entity.Bike;
-import com.zoomigo.whatsapp.whatsapprentalbot.entity.Booking;
-import com.zoomigo.whatsapp.whatsapprentalbot.entity.ChatSessionEntity;
-import com.zoomigo.whatsapp.whatsapprentalbot.entity.PromoCode;
-import com.zoomigo.whatsapp.whatsapprentalbot.entity.User;
-import com.zoomigo.whatsapp.whatsapprentalbot.repository.BikeRepository;
-import com.zoomigo.whatsapp.whatsapprentalbot.repository.BookingRepository;
-import com.zoomigo.whatsapp.whatsapprentalbot.repository.ChatSessionRepository;
-import com.zoomigo.whatsapp.whatsapprentalbot.repository.PromoCodeRepository;
-import com.zoomigo.whatsapp.whatsapprentalbot.repository.UserRepository;
+import com.zoomigo.whatsapp.whatsapprentalbot.entity.*;
+import com.zoomigo.whatsapp.whatsapprentalbot.repository.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -19,11 +11,15 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.time.LocalDate;
-import java.util.*;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -165,17 +161,21 @@ class ConversationServiceTest {
         // ensure we have startDate and days set for later price/endDate calculations
         u.setStartDate(LocalDate.now());
         u.setDays(2);
-        Bike b1 = new Bike(); b1.setId(201L); b1.setName("Zoomer Pro"); b1.setPricePerDay(600); b1.setDeposit(200);
+        Bike b1 = new Bike();
+        b1.setId(201L);
+        b1.setName("Zoomer Pro");
+        b1.setPricePerDay(600);
+        b1.setDeposit(200);
         when(bikeRepo.findByIsAvailableTrue()).thenReturn(List.of(b1));
 
         // chat session without bikeMap so service will emit list
-        when(chatSessionRepo.findByWaId("u4")).thenReturn(Optional.of(new ChatSessionEntity("u4","ASK_BIKE",new HashMap<>())));
+        when(chatSessionRepo.findByWaId("u4")).thenReturn(Optional.of(new ChatSessionEntity("u4", "ASK_BIKE", new HashMap<>())));
 
         String r2 = service.handleMessage("u4", "");
         assertThat(r2).contains("Available bikes");
 
         // prepare session with bikeMap so user can select by free-text name
-        ChatSessionEntity session = new ChatSessionEntity("u4","ASK_BIKE", new HashMap<>());
+        ChatSessionEntity session = new ChatSessionEntity("u4", "ASK_BIKE", new HashMap<>());
         session.getDataJson().put("bikeMap", Map.of("1", 201L));
         when(chatSessionRepo.findByWaId("u4")).thenReturn(Optional.of(session));
         when(bikeRepo.findById(201L)).thenReturn(Optional.of(b1));
@@ -198,9 +198,13 @@ class ConversationServiceTest {
         u.setPickupType("Pickup at shop");
         when(userRepo.findByPhoneNumber("u5")).thenReturn(Optional.of(u));
 
-        Bike b = new Bike(); b.setId(301L); b.setName("Scoot"); b.setPricePerDay(300); b.setDeposit(50);
+        Bike b = new Bike();
+        b.setId(301L);
+        b.setName("Scoot");
+        b.setPricePerDay(300);
+        b.setDeposit(50);
         when(bikeRepo.findByIsAvailableTrue()).thenReturn(List.of(b));
-        ChatSessionEntity session = new ChatSessionEntity("u5","ASK_BIKE", new HashMap<>());
+        ChatSessionEntity session = new ChatSessionEntity("u5", "ASK_BIKE", new HashMap<>());
         session.getDataJson().put("bikeMap", Map.of("1", 301L));
         when(chatSessionRepo.findByWaId("u5")).thenReturn(Optional.of(session));
         when(bikeRepo.findById(301L)).thenReturn(Optional.of(b));
@@ -263,9 +267,13 @@ class ConversationServiceTest {
         u.setDays(1);
         when(userRepo.findByPhoneNumber("u11")).thenReturn(Optional.of(u));
 
-        Bike b = new Bike(); b.setId(601L); b.setName("Mini"); b.setPricePerDay(150); b.setDeposit(30);
+        Bike b = new Bike();
+        b.setId(601L);
+        b.setName("Mini");
+        b.setPricePerDay(150);
+        b.setDeposit(30);
         when(bikeRepo.findByIsAvailableTrue()).thenReturn(List.of(b));
-        ChatSessionEntity session = new ChatSessionEntity("u11","ASK_BIKE", new HashMap<>());
+        ChatSessionEntity session = new ChatSessionEntity("u11", "ASK_BIKE", new HashMap<>());
         session.getDataJson().put("bikeMap", Map.of("1", 601L));
         when(chatSessionRepo.findByWaId("u11")).thenReturn(Optional.of(session));
         when(bikeRepo.findById(601L)).thenReturn(Optional.of(b));
@@ -281,7 +289,7 @@ class ConversationServiceTest {
         u.setPhoneNumber("ux1");
         u.setStage("ASK_DAYS");
         when(userRepo.findByPhoneNumber("ux1")).thenReturn(Optional.of(u));
-        when(chatSessionRepo.findByWaId("ux1")).thenReturn(Optional.of(new ChatSessionEntity("ux1","ASK_DAYS", new HashMap<>())));
+        when(chatSessionRepo.findByWaId("ux1")).thenReturn(Optional.of(new ChatSessionEntity("ux1", "ASK_DAYS", new HashMap<>())));
 
         String r1 = service.handleMessage("ux1", "zero");
         assertThat(r1).contains("Please enter a valid number of days");
@@ -301,7 +309,7 @@ class ConversationServiceTest {
         u.setPhoneNumber("ux2");
         u.setStage("ASK_PROMO");
         when(userRepo.findByPhoneNumber("ux2")).thenReturn(Optional.of(u));
-        when(chatSessionRepo.findByWaId("ux2")).thenReturn(Optional.of(new ChatSessionEntity("ux2","ASK_PROMO", new HashMap<>())));
+        when(chatSessionRepo.findByWaId("ux2")).thenReturn(Optional.of(new ChatSessionEntity("ux2", "ASK_PROMO", new HashMap<>())));
 
         // promo not found
         when(promoRepo.findByCodeIgnoreCase("NOPE")).thenReturn(Optional.empty());
@@ -309,7 +317,12 @@ class ConversationServiceTest {
         assertThat(r1).contains("Promo code not found");
 
         // exhausted promo
-        PromoCode p = new PromoCode(); p.setId(7L); p.setCode("LIMITED"); p.setActive(true); p.setTotalAllocation(1); p.setUsedCount(1);
+        PromoCode p = new PromoCode();
+        p.setId(7L);
+        p.setCode("LIMITED");
+        p.setActive(true);
+        p.setTotalAllocation(1);
+        p.setUsedCount(1);
         when(promoRepo.findByCodeIgnoreCase("LIMITED")).thenReturn(Optional.of(p));
         String r2 = service.handleMessage("ux2", "LIMITED");
         assertThat(r2).contains("fully used");
@@ -333,7 +346,7 @@ class ConversationServiceTest {
         u.setPhoneNumber("u8");
         u.setStage("ASK_PICKUP");
         when(userRepo.findByPhoneNumber("u8")).thenReturn(Optional.of(u));
-        when(chatSessionRepo.findByWaId("u8")).thenReturn(Optional.of(new ChatSessionEntity("u8","ASK_PICKUP", new HashMap<>())));
+        when(chatSessionRepo.findByWaId("u8")).thenReturn(Optional.of(new ChatSessionEntity("u8", "ASK_PICKUP", new HashMap<>())));
 
         String r = service.handleMessage("u8", "2");
         assertThat(r).contains("delivery address");
@@ -345,10 +358,14 @@ class ConversationServiceTest {
         u.setPhoneNumber("u9");
         u.setStage("ASK_ADDRESS");
         when(userRepo.findByPhoneNumber("u9")).thenReturn(Optional.of(u));
-        ChatSessionEntity s = new ChatSessionEntity("u9","ASK_ADDRESS", new HashMap<>());
+        ChatSessionEntity s = new ChatSessionEntity("u9", "ASK_ADDRESS", new HashMap<>());
         when(chatSessionRepo.findByWaId("u9")).thenReturn(Optional.of(s));
 
-        Bike b = new Bike(); b.setId(401L); b.setName("City"); b.setPricePerDay(200); b.setDeposit(50);
+        Bike b = new Bike();
+        b.setId(401L);
+        b.setName("City");
+        b.setPricePerDay(200);
+        b.setDeposit(50);
         when(bikeRepo.findByIsAvailableTrue()).thenReturn(List.of(b));
 
         String r = service.handleMessage("u9", "My street 123");
@@ -365,9 +382,13 @@ class ConversationServiceTest {
         u.setPickupType("Pickup at shop");
         when(userRepo.findByPhoneNumber("u10")).thenReturn(Optional.of(u));
 
-        Bike b = new Bike(); b.setId(501L); b.setName("Roadster"); b.setPricePerDay(400); b.setDeposit(80);
+        Bike b = new Bike();
+        b.setId(501L);
+        b.setName("Roadster");
+        b.setPricePerDay(400);
+        b.setDeposit(80);
         when(bikeRepo.findByIsAvailableTrue()).thenReturn(List.of(b));
-        ChatSessionEntity session = new ChatSessionEntity("u10","ASK_BIKE", new HashMap<>());
+        ChatSessionEntity session = new ChatSessionEntity("u10", "ASK_BIKE", new HashMap<>());
         session.getDataJson().put("bikeMap", Map.of("1", 501L));
         when(chatSessionRepo.findByWaId("u10")).thenReturn(Optional.of(session));
         when(bikeRepo.findById(501L)).thenReturn(Optional.of(b));
@@ -378,9 +399,11 @@ class ConversationServiceTest {
 
     @Test
     void defaultUnknownInputSuggestsStart() {
-        User u = new User(); u.setPhoneNumber("ux5"); u.setStage("UNKNOWN_STATE");
+        User u = new User();
+        u.setPhoneNumber("ux5");
+        u.setStage("UNKNOWN_STATE");
         when(userRepo.findByPhoneNumber("ux5")).thenReturn(Optional.of(u));
-        when(chatSessionRepo.findByWaId("ux5")).thenReturn(Optional.of(new ChatSessionEntity("ux5","UNKNOWN_STATE", new HashMap<>())));
+        when(chatSessionRepo.findByWaId("ux5")).thenReturn(Optional.of(new ChatSessionEntity("ux5", "UNKNOWN_STATE", new HashMap<>())));
 
         String r = service.handleMessage("ux5", "blabla");
         assertThat(r).contains("didn't understand");
@@ -388,9 +411,11 @@ class ConversationServiceTest {
 
     @Test
     void askPickupInvalidOptionShowsHelp() {
-        User u = new User(); u.setPhoneNumber("ux3"); u.setStage("ASK_PICKUP");
+        User u = new User();
+        u.setPhoneNumber("ux3");
+        u.setStage("ASK_PICKUP");
         when(userRepo.findByPhoneNumber("ux3")).thenReturn(Optional.of(u));
-        when(chatSessionRepo.findByWaId("ux3")).thenReturn(Optional.of(new ChatSessionEntity("ux3","ASK_PICKUP", new HashMap<>())));
+        when(chatSessionRepo.findByWaId("ux3")).thenReturn(Optional.of(new ChatSessionEntity("ux3", "ASK_PICKUP", new HashMap<>())));
 
         String r = service.handleMessage("ux3", "maybe later");
         assertThat(r).contains("Please reply with 1 or 2");
@@ -398,9 +423,11 @@ class ConversationServiceTest {
 
     @Test
     void askBikeNoAvailableShowsMessage() {
-        User u = new User(); u.setPhoneNumber("ux4"); u.setStage("ASK_BIKE");
+        User u = new User();
+        u.setPhoneNumber("ux4");
+        u.setStage("ASK_BIKE");
         when(userRepo.findByPhoneNumber("ux4")).thenReturn(Optional.of(u));
-        when(chatSessionRepo.findByWaId("ux4")).thenReturn(Optional.of(new ChatSessionEntity("ux4","ASK_BIKE", new HashMap<>())));
+        when(chatSessionRepo.findByWaId("ux4")).thenReturn(Optional.of(new ChatSessionEntity("ux4", "ASK_BIKE", new HashMap<>())));
 
         when(bikeRepo.findByIsAvailableTrue()).thenReturn(List.of());
         String r = service.handleMessage("ux4", "");
@@ -418,11 +445,16 @@ class ConversationServiceTest {
         when(userRepo.findByPhoneNumber("up1")).thenReturn(Optional.of(u));
 
         ChatSessionEntity session = new ChatSessionEntity("up1", "ASK_BIKE", new HashMap<>());
-        Map<String, Object> data = new HashMap<>(); data.put("bikeMap", Map.of("1", 701L));
+        Map<String, Object> data = new HashMap<>();
+        data.put("bikeMap", Map.of("1", 701L));
         session.setDataJson(data);
         when(chatSessionRepo.findByWaId("up1")).thenReturn(Optional.of(session));
 
-        Bike b = new Bike(); b.setId(701L); b.setName("PercentBike"); b.setPricePerDay(1000); b.setDeposit(100);
+        Bike b = new Bike();
+        b.setId(701L);
+        b.setName("PercentBike");
+        b.setPricePerDay(1000);
+        b.setDeposit(100);
         when(bikeRepo.findById(701L)).thenReturn(Optional.of(b));
         when(bikeRepo.findByIsAvailableTrue()).thenReturn(List.of(b));
 
@@ -431,14 +463,20 @@ class ConversationServiceTest {
         assertThat(r1).contains("promo code");
 
         // now apply percent promo
-        u.setStage("ASK_PROMO"); when(userRepo.findByPhoneNumber("up1")).thenReturn(Optional.of(u));
-        PromoCode pc = new PromoCode(); pc.setId(11L); pc.setCode("PERC10"); pc.setDiscountPercent(10); pc.setActive(true);
+        u.setStage("ASK_PROMO");
+        when(userRepo.findByPhoneNumber("up1")).thenReturn(Optional.of(u));
+        PromoCode pc = new PromoCode();
+        pc.setId(11L);
+        pc.setCode("PERC10");
+        pc.setDiscountPercent(10);
+        pc.setActive(true);
         when(promoRepo.findByCodeIgnoreCase("PERC10")).thenReturn(Optional.of(pc));
 
         String r2 = service.handleMessage("up1", "PERC10");
         assertThat(r2).contains("applied");
         // confirm
-        u.setStage("CONFIRM_BIKE"); when(userRepo.findByPhoneNumber("up1")).thenReturn(Optional.of(u));
+        u.setStage("CONFIRM_BIKE");
+        when(userRepo.findByPhoneNumber("up1")).thenReturn(Optional.of(u));
         when(promoRepo.findById(11L)).thenReturn(Optional.of(pc));
 
         String r3 = service.handleMessage("up1", "1");
@@ -458,11 +496,16 @@ class ConversationServiceTest {
         when(userRepo.findByPhoneNumber("up2")).thenReturn(Optional.of(u));
 
         ChatSessionEntity session = new ChatSessionEntity("up2", "ASK_BIKE", new HashMap<>());
-        Map<String, Object> data = new HashMap<>(); data.put("bikeMap", Map.of("1", 801L));
+        Map<String, Object> data = new HashMap<>();
+        data.put("bikeMap", Map.of("1", 801L));
         session.setDataJson(data);
         when(chatSessionRepo.findByWaId("up2")).thenReturn(Optional.of(session));
 
-        Bike b = new Bike(); b.setId(801L); b.setName("MappedBike"); b.setPricePerDay(500); b.setDeposit(50);
+        Bike b = new Bike();
+        b.setId(801L);
+        b.setName("MappedBike");
+        b.setPricePerDay(500);
+        b.setDeposit(50);
         when(bikeRepo.findById(801L)).thenReturn(Optional.of(b));
         when(bikeRepo.findByIsAvailableTrue()).thenReturn(List.of(b));
 
@@ -471,23 +514,30 @@ class ConversationServiceTest {
         assertThat(r1).contains("promo code");
 
         // create promo that is only valid for bike id 999 (different)
-        PromoCode pc = new PromoCode(); pc.setId(20L); pc.setCode("BIKEONLY"); pc.setDiscountAmount(100); pc.setActive(true);
+        PromoCode pc = new PromoCode();
+        pc.setId(20L);
+        pc.setCode("BIKEONLY");
+        pc.setDiscountAmount(100);
+        pc.setActive(true);
         when(promoRepo.findByCodeIgnoreCase("BIKEONLY")).thenReturn(Optional.of(pc));
         // promoBikeRepo has mapping only to bike id 999
         com.zoomigo.whatsapp.whatsapprentalbot.entity.PromoCodeBike mapping = new com.zoomigo.whatsapp.whatsapprentalbot.entity.PromoCodeBike();
         mapping.setId(1L);
         mapping.setPromoCode(pc);
-        Bike other = new Bike(); other.setId(999L);
+        Bike other = new Bike();
+        other.setId(999L);
         mapping.setBike(other);
         when(promoBikeRepo.findByPromoCode_Id(20L)).thenReturn(List.of(mapping));
 
         // go to promo stage
-        u.setStage("ASK_PROMO"); when(userRepo.findByPhoneNumber("up2")).thenReturn(Optional.of(u));
+        u.setStage("ASK_PROMO");
+        when(userRepo.findByPhoneNumber("up2")).thenReturn(Optional.of(u));
         String r2 = service.handleMessage("up2", "BIKEONLY");
         // promo entered but mapping doesn't match selected bike — user should be informed it does not apply
         assertThat(r2).contains("does not apply");
 
-        u.setStage("CONFIRM_BIKE"); when(userRepo.findByPhoneNumber("up2")).thenReturn(Optional.of(u));
+        u.setStage("CONFIRM_BIKE");
+        when(userRepo.findByPhoneNumber("up2")).thenReturn(Optional.of(u));
         when(promoRepo.findById(20L)).thenReturn(Optional.of(pc));
         String r3 = service.handleMessage("up2", "1");
         assertThat(r3).contains("Booking confirmed");

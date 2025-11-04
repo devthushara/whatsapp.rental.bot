@@ -12,7 +12,10 @@ public class Bike {
     private Long id;
 
     private String name;
-    private Integer pricePerDay;
+    private Integer pricePerDay; // stored in smallest currency unit (cents) or base unit; existing code uses integer rupees
     private Integer deposit;
     private boolean isAvailable;
+
+    // Currency unit for this bike's pricing. If null, system default (USD) applies.
+    private String currencyUnit;
 }

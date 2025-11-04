@@ -30,7 +30,9 @@ class SessionResetServiceTest {
 
     @Test
     void resetUserAndSession() {
-        User u = new User(); u.setPhoneNumber("p1"); u.setStage("ASK_NAME");
+        User u = new User();
+        u.setPhoneNumber("p1");
+        u.setStage("ASK_NAME");
         when(userRepo.findByPhoneNumber("p1")).thenReturn(Optional.of(u));
 
         service.resetUserAndSession("p1");

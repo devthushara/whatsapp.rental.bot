@@ -19,7 +19,8 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -60,13 +61,14 @@ class ConversationServiceExtraTest {
         u.setPhoneNumber("d1");
         u.setStage("ASK_START_DATE");
         when(userRepo.findByPhoneNumber("d1")).thenReturn(Optional.of(u));
-        when(chatSessionRepo.findByWaId("d1")).thenReturn(Optional.of(new com.zoomigo.whatsapp.whatsapprentalbot.entity.ChatSessionEntity("d1","ASK_START_DATE", new java.util.HashMap<>())));
+        when(chatSessionRepo.findByWaId("d1")).thenReturn(Optional.of(new com.zoomigo.whatsapp.whatsapprentalbot.entity.ChatSessionEntity("d1", "ASK_START_DATE", new java.util.HashMap<>())));
 
         String r = service.handleMessage("d1", "9 Nov");
         assertThat(r).contains("pick up");
 
         // also explicit yyyy-mm-dd
-        u.setStage("ASK_START_DATE"); when(userRepo.findByPhoneNumber("d1")).thenReturn(Optional.of(u));
+        u.setStage("ASK_START_DATE");
+        when(userRepo.findByPhoneNumber("d1")).thenReturn(Optional.of(u));
         r = service.handleMessage("d1", LocalDate.now().plusDays(1).toString());
         assertThat(r).contains("pick up");
     }
@@ -81,9 +83,13 @@ class ConversationServiceExtraTest {
         u.setDays(1);
         u.setName("Bob");
         when(userRepo.findByPhoneNumber("c1")).thenReturn(Optional.of(u));
-        when(chatSessionRepo.findByWaId("c1")).thenReturn(Optional.of(new com.zoomigo.whatsapp.whatsapprentalbot.entity.ChatSessionEntity("c1","CONFIRM_BIKE", new java.util.HashMap<>())));
+        when(chatSessionRepo.findByWaId("c1")).thenReturn(Optional.of(new com.zoomigo.whatsapp.whatsapprentalbot.entity.ChatSessionEntity("c1", "CONFIRM_BIKE", new java.util.HashMap<>())));
 
-        Bike b = new Bike(); b.setId(123L); b.setName("ConfBike"); b.setPricePerDay(500); b.setDeposit(100);
+        Bike b = new Bike();
+        b.setId(123L);
+        b.setName("ConfBike");
+        b.setPricePerDay(500);
+        b.setDeposit(100);
         when(bikeRepo.findById(123L)).thenReturn(Optional.of(b));
 
         String r = service.handleMessage("c1", "yes");
@@ -95,7 +101,10 @@ class ConversationServiceExtraTest {
         when(cacheManager.getCache("promos")).thenReturn(promosCache);
         when(promosCache.get("test", PromoCode.class)).thenReturn(null);
 
-        PromoCode p = new PromoCode(); p.setId(2L); p.setCode("TEST"); p.setActive(true);
+        PromoCode p = new PromoCode();
+        p.setId(2L);
+        p.setCode("TEST");
+        p.setActive(true);
         when(promoRepo.findByCodeIgnoreCase("TEST")).thenReturn(Optional.of(p));
 
         PromoCode fetched = service.getPromoByCode("TEST");
@@ -107,7 +116,10 @@ class ConversationServiceExtraTest {
     void getAvailableBikes_usesCache() {
         when(cacheManager.getCache("bikes")).thenReturn(bikesCache);
         when(bikesCache.get("all", List.class)).thenReturn(null);
-        Bike b = new Bike(); b.setId(10L); b.setName("CacheBike"); b.setPricePerDay(200);
+        Bike b = new Bike();
+        b.setId(10L);
+        b.setName("CacheBike");
+        b.setPricePerDay(200);
         when(bikeRepo.findByIsAvailableTrue()).thenReturn(List.of(b));
 
         List<Bike> first = service.getAvailableBikes();

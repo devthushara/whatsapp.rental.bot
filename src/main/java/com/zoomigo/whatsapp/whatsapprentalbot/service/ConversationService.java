@@ -1,16 +1,8 @@
 package com.zoomigo.whatsapp.whatsapprentalbot.service;
 
-import com.zoomigo.whatsapp.whatsapprentalbot.entity.Bike;
-import com.zoomigo.whatsapp.whatsapprentalbot.entity.Booking;
-import com.zoomigo.whatsapp.whatsapprentalbot.entity.ChatSessionEntity;
-import com.zoomigo.whatsapp.whatsapprentalbot.entity.PromoCode;
-import com.zoomigo.whatsapp.whatsapprentalbot.entity.User;
-import com.zoomigo.whatsapp.whatsapprentalbot.repository.BikeRepository;
-import com.zoomigo.whatsapp.whatsapprentalbot.repository.BookingRepository;
-import com.zoomigo.whatsapp.whatsapprentalbot.repository.ChatSessionRepository;
-import com.zoomigo.whatsapp.whatsapprentalbot.repository.PromoCodeRepository;
-import com.zoomigo.whatsapp.whatsapprentalbot.repository.UserRepository;
-import com.zoomigo.whatsapp.whatsapprentalbot.repository.PromoCodeBikeRepository;
+import com.joestelmach.natty.Parser;
+import com.zoomigo.whatsapp.whatsapprentalbot.entity.*;
+import com.zoomigo.whatsapp.whatsapprentalbot.repository.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -18,15 +10,12 @@ import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.Year;
-import java.time.format.DateTimeFormatter;
-import com.joestelmach.natty.Parser;
 import java.time.ZoneId;
-import java.util.Date;
-import java.util.List;
-import java.util.Locale;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 @Slf4j
@@ -40,20 +29,33 @@ public class ConversationService {
     private final SessionResetService sessionResetService;
     private final PromoCodeRepository promoRepo;
     private final PromoCodeBikeRepository promoBikeRepo;
+    private final ExchangeRateService exchangeRateService;
     private final DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("dd MMM yyyy");
-    @Value("${app.shop-address}")
+    @Value("${app.shop-address:No. 1, Paramulla Road, Matara}")
+    private String shopAddressProp;
+    // backward-compatible field used in older tests
+    @Value("${app.shop-address:No. 1, Paramulla Road, Matara}")
     private String shopAddress;
+
+    @Value("${app.display-name:ZoomiGo MotoRent}")
+    private String displayNameProp;
+    // keep displayName alias too (if tests reference it)
     @Value("${app.display-name:ZoomiGo MotoRent}")
     private String displayName;
 
+    private final AppConfigService appConfigService;
+
     private CacheManager cacheManager;
 
+    @Autowired
     public ConversationService(UserRepository userRepo, BikeRepository bikeRepo,
                                ChatSessionRepository chatSessionRepo,
                                SessionResetService sessionResetService,
                                BookingRepository bookingRepo,
                                PromoCodeRepository promoRepo,
-                               PromoCodeBikeRepository promoBikeRepo) {
+                               PromoCodeBikeRepository promoBikeRepo,
+                               ExchangeRateService exchangeRateService,
+                               AppConfigService appConfigService) {
         this.userRepo = userRepo;
         this.bikeRepo = bikeRepo;
         this.chatSessionRepo = chatSessionRepo;
@@ -61,11 +63,57 @@ public class ConversationService {
         this.sessionResetService = sessionResetService;
         this.promoRepo = promoRepo;
         this.promoBikeRepo = promoBikeRepo;
+        this.exchangeRateService = exchangeRateService;
+        this.appConfigService = appConfigService;
+    }
+
+    // Backwards-compatible constructor for existing tests/code that don't provide ExchangeRateService
+    public ConversationService(UserRepository userRepo, BikeRepository bikeRepo,
+                               ChatSessionRepository chatSessionRepo,
+                               SessionResetService sessionResetService,
+                               BookingRepository bookingRepo,
+                               PromoCodeRepository promoRepo,
+                               PromoCodeBikeRepository promoBikeRepo) {
+        this(userRepo, bikeRepo, chatSessionRepo, sessionResetService, bookingRepo, promoRepo, promoBikeRepo, null, null);
+    }
+
+    // New backwards-compatible constructor to accept ExchangeRateService but not AppConfigService
+    public ConversationService(UserRepository userRepo, BikeRepository bikeRepo,
+                               ChatSessionRepository chatSessionRepo,
+                               SessionResetService sessionResetService,
+                               BookingRepository bookingRepo,
+                               PromoCodeRepository promoRepo,
+                               PromoCodeBikeRepository promoBikeRepo,
+                               ExchangeRateService exchangeRateService) {
+        this(userRepo, bikeRepo, chatSessionRepo, sessionResetService, bookingRepo, promoRepo, promoBikeRepo, exchangeRateService, null);
     }
 
     @Autowired(required = false)
     public void setCacheManager(CacheManager cacheManager) {
         this.cacheManager = cacheManager;
+    }
+
+    private String getShopAddress() {
+        try {
+            if (appConfigService != null) {
+                String v = appConfigService.getString("app.shop-address", shopAddressProp);
+                if (v != null && !v.isBlank()) return v;
+            }
+        } catch (Exception ignored) {}
+        // prefer alias field if set (tests may set shopAddress via reflection)
+        if (shopAddress != null && !shopAddress.isBlank()) return shopAddress;
+        return shopAddressProp;
+    }
+
+    private String getDisplayName() {
+        try {
+            if (appConfigService != null) {
+                String v = appConfigService.getString("app.display-name", displayNameProp);
+                if (v != null && !v.isBlank()) return v;
+            }
+        } catch (Exception ignored) {}
+        if (displayName != null && !displayName.isBlank()) return displayName;
+        return displayNameProp;
     }
 
     // Use explicit cache access to avoid self-invocation cache issues in unit tests
@@ -181,7 +229,7 @@ public class ConversationService {
             case "START":
                 user.setStage("ASK_NAME");
                 save(user, session, "ASK_NAME", sessionData);
-                return String.format("👋 Welcome to *%s*!\nPlease tell me your *name* to start your booking.", displayName);
+                return String.format("👋 Welcome to *%s*!\nPlease tell me your *name* to start your booking.", getDisplayName());
 
             case "ASK_NAME":
                 if (text.equalsIgnoreCase("hi") || text.equalsIgnoreCase("hello")) {
@@ -270,8 +318,11 @@ public class ConversationService {
                         Bike b = availableBikes.get(i);
                         String id = String.valueOf(i + 1);
                         bikeMapRaw.put(id, b.getId());
+                        // Format price using exchange service (base USD -> active currency)
+                        BigDecimal price = BigDecimal.valueOf(b.getPricePerDay());
+                        String priceDisplay = formatMoney(price);
                         list.append(id).append(". ").append(b.getName())
-                                .append(" - Rs.").append(b.getPricePerDay()).append("/day\n");
+                                .append(" - ").append(priceDisplay).append("/day\n");
                     }
                     sessionData.put("bikeMap", bikeMapRaw);
                     saveSession(session, "ASK_BIKE", sessionData);
@@ -301,19 +352,21 @@ public class ConversationService {
                             save(user, session, "CONFIRM_BIKE", sessionData);
 
                             LocalDate endDate = user.getStartDate().plusDays(user.getDays());
-                            double total = b.getPricePerDay() * user.getDays();
-                            double deposit = b.getDeposit();
+                            BigDecimal total = BigDecimal.valueOf(b.getPricePerDay()).multiply(BigDecimal.valueOf(user.getDays()));
+                            BigDecimal deposit = BigDecimal.valueOf(b.getDeposit());
+                            String totalStr = formatMoney(total);
+                            String depositStr = formatMoney(deposit);
                             String pickupMsg = "Pickup at shop".equals(user.getPickupType())
-                                    ? "\n🏠 Shop address: *" + shopAddress + "*"
+                                    ? "\n🏠 Shop address: *" + getShopAddress() + "*"
                                     : "";
 
                             return String.format(
-                                    "You selected *%s* for %d days (%s → %s).\nTotal: Rs%.2f + deposit Rs%.2f\n\nConfirm booking?\n1️⃣ Yes\n2️⃣ No%s",
+                                    "You selected *%s* for %d days (%s → %s).\nTotal: %s + deposit %s\n\nConfirm booking?\n1️⃣ Yes\n2️⃣ No%s",
                                     b.getName(),
                                     user.getDays(),
                                     dateFormatter.format(user.getStartDate()),
                                     dateFormatter.format(endDate),
-                                    total, deposit, pickupMsg);
+                                    totalStr, depositStr, pickupMsg);
                         }
                     }
                     return "❌ Invalid bike number. Please choose again.";
@@ -334,17 +387,19 @@ public class ConversationService {
                 save(user, session, "ASK_PROMO", sessionData);
 
                 LocalDate endDate = user.getStartDate().plusDays(user.getDays());
-                double total = selectedBike.getPricePerDay() * user.getDays();
-                double deposit = selectedBike.getDeposit();
-                String pickupMsg = "Pickup at shop".equals(user.getPickupType()) ? "\n🏠 Pickup location: *" + shopAddress + "*" : "";
+                BigDecimal total = BigDecimal.valueOf((long) selectedBike.getPricePerDay()).multiply(BigDecimal.valueOf(user.getDays()));
+                BigDecimal deposit = BigDecimal.valueOf(selectedBike.getDeposit());
+                String totalStr = formatMoney(total);
+                String depositStr = formatMoney(deposit);
+                String pickupMsg = "Pickup at shop".equals(user.getPickupType()) ? "\n🏠 Pickup location: *" + getShopAddress() + "*" : "";
 
                 return String.format(
-                        "You selected *%s* for %d days (%s → %s).\nTotal: Rs%.2f + deposit Rs%.2f\n\nDo you have a promo code? If yes, type it now to apply it; or reply '1' to confirm the booking, '2' to choose another bike.\n\nConfirm booking?\n1️⃣ Yes\n2️⃣ No%s",
+                        "You selected *%s* for %d days (%s → %s).\nTotal: %s + deposit %s\n\nDo you have a promo code? If yes, type it now to apply it; or reply '1' to confirm the booking, '2' to choose another bike.\n\nConfirm booking?\n1️⃣ Yes\n2️⃣ No%s",
                         selectedBike.getName(),
                         user.getDays(),
                         dateFormatter.format(user.getStartDate()),
                         dateFormatter.format(endDate),
-                        total, deposit, pickupMsg);
+                        totalStr, depositStr, pickupMsg);
 
             case "ASK_PROMO":
                 // If user explicitly says 'no' here (safety net), skip promo
@@ -352,10 +407,10 @@ public class ConversationService {
                     save(user, session, "CONFIRM_BIKE", sessionData);
                     return "No promo applied. Please confirm your booking: 1️⃣ Yes  2️⃣ No";
                 }
-                 // New behavior: user may either enter a promo code, or reply '1' to confirm, or '2' to choose another bike.
-                 if ("1".equals(text) || "2".equals(text)) {
-                     return handleConfirmOrReselect(user, session, sessionData, text);
-                 }
+                // New behavior: user may either enter a promo code, or reply '1' to confirm, or '2' to choose another bike.
+                if ("1".equals(text) || "2".equals(text)) {
+                    return handleConfirmOrReselect(user, session, sessionData, text);
+                }
 
                 // If empty input, repeat the prompt without requiring a 'no' response
                 if (text.isBlank()) {
@@ -417,7 +472,10 @@ public class ConversationService {
 
                 String promoPriceLine = "";
                 if (chosenBike != null) {
-                    promoPriceLine = String.format("Discount: Rs%d. New total: Rs%d + deposit Rs%d\n\n", discountPromo, finalPricePromo, depositAmtPromo);
+                    String disc = formatMoney(BigDecimal.valueOf(discountPromo));
+                    String finalP = formatMoney(BigDecimal.valueOf(finalPricePromo));
+                    String dep = formatMoney(BigDecimal.valueOf(depositAmtPromo));
+                    promoPriceLine = String.format("Discount: %s. New total: %s + deposit %s\n\n", disc, finalP, dep);
                 }
 
                 return String.format("✅ Promo '%s' applied. %sPlease reply '1' to confirm or '2' to choose another bike.", promoCodeCandidate.getCode(), promoPriceLine);
@@ -464,15 +522,17 @@ public class ConversationService {
                             if (latest.getStartDate() != null && latest.getEndDate() != null) {
                                 dates = String.format(" 📅 *%s → %s*", dateFormatter.format(latest.getStartDate()), dateFormatter.format(latest.getEndDate()));
                             }
-                        } catch (Exception ignored) { }
+                        } catch (Exception ignored) {
+                        }
 
                         // price and deposit
                         String priceLine = "";
                         try {
-                            double priceLatest = latest.getPrice();
-                            double depositLatest = latest.getDeposit();
-                            priceLine = String.format("\n💰 Rs%.2f + deposit Rs%.2f", priceLatest, depositLatest);
-                        } catch (Exception ignored) { }
+                            BigDecimal priceLatest = BigDecimal.valueOf(latest.getPrice());
+                            BigDecimal depositLatest = BigDecimal.valueOf(latest.getDeposit());
+                            priceLine = String.format("\n💰 %s + deposit %s", formatMoney(priceLatest), formatMoney(depositLatest));
+                        } catch (Exception ignored) {
+                        }
 
                         msg.append(String.format(" We’ll contact you soon to finalise pickup/delivery for %s.%s%s", bike, dates, priceLine));
 
@@ -484,7 +544,7 @@ public class ConversationService {
 
                         // Pickup/Delivery specifics
                         if ("Pickup at shop".equalsIgnoreCase(latest.getPickupType()) || "Pickup at shop".equalsIgnoreCase(user.getPickupType())) {
-                            msg.append(String.format("\n\n🏠 Pickup location: *%s*", shopAddress == null ? "the shop" : shopAddress));
+                            msg.append(String.format("\n\n🏠 Pickup location: *%s*", getShopAddress() == null ? "the shop" : getShopAddress()));
                             msg.append("\nWe will message you when the booking is ready for pickup.");
                         } else if (latest.getDeliveryAddress() != null && !latest.getDeliveryAddress().isBlank()) {
                             msg.append(String.format("\n\n🚚 Delivery address: *%s*", latest.getDeliveryAddress()));
@@ -498,7 +558,7 @@ public class ConversationService {
                     } else {
                         // fallback to user's stored pickup/delivery info
                         if ("Pickup at shop".equalsIgnoreCase(user.getPickupType())) {
-                            msg.append(String.format(" We’ll contact you soon to finalise pickup at *%s*.", shopAddress == null ? "the shop" : shopAddress));
+                            msg.append(String.format(" We’ll contact you soon to finalise pickup at *%s*.", getShopAddress() == null ? "the shop" : getShopAddress()));
                         } else if (user.getDeliveryAddress() != null && !user.getDeliveryAddress().isBlank()) {
                             msg.append(String.format(" We’ll contact you soon to finalise delivery to *%s*.", user.getDeliveryAddress()));
                         } else {
@@ -651,7 +711,8 @@ public class ConversationService {
                 if (no.contains(t)) return "2";
                 // also handle phrases like 'confirm', 'reselect'
                 if (t.contains("confirm") || t.contains("confirm booking") || t.contains("confirm please")) return "1";
-                if (t.contains("reselect") || t.contains("choose another") || t.contains("choose another bike") || t.contains("change")) return "2";
+                if (t.contains("reselect") || t.contains("choose another") || t.contains("choose another bike") || t.contains("change"))
+                    return "2";
             }
         }
         return null;
@@ -690,7 +751,10 @@ public class ConversationService {
                     if (pidObj instanceof Number) {
                         pid = ((Number) pidObj).longValue();
                     } else if (pidObj instanceof String) {
-                        try { pid = Long.valueOf((String) pidObj); } catch (NumberFormatException ignored) {}
+                        try {
+                            pid = Long.valueOf((String) pidObj);
+                        } catch (NumberFormatException ignored) {
+                        }
                     }
                     if (pid != null) p = promoRepo.findById(pid).orElse(null);
                 }
@@ -724,7 +788,8 @@ public class ConversationService {
                                 if (finalObj instanceof Number) appliedFinal = ((Number) finalObj).intValue();
                                 else appliedFinal = Integer.valueOf(String.valueOf(finalObj));
                             } catch (Exception ignored) {
-                                appliedDiscount = null; appliedFinal = null;
+                                appliedDiscount = null;
+                                appliedFinal = null;
                             }
                         }
 
@@ -774,20 +839,20 @@ public class ConversationService {
             // persist updated user stage and cleared session
             save(user, session, "BOOKING_CONFIRMED", sessionData);
 
-            String pickupMsg = "Pickup at shop".equals(user.getPickupType()) ? "\n🏠 Pickup location: *" + shopAddress + "*" : "";
-            double total = booking.getPrice();
-            double deposit = booking.getDeposit();
+            String pickupMsg = "Pickup at shop".equals(user.getPickupType()) ? "\n🏠 Pickup location: *" + getShopAddress() + "*" : "";
+            String totalStr = formatMoney(BigDecimal.valueOf(booking.getPrice()));
+            String depositStr = formatMoney(BigDecimal.valueOf(booking.getDeposit()));
 
             String promoMsg = "";
             if (booking.getPromoApplied() != null && booking.getPromoApplied() && booking.getPromoCode() != null) {
                 int applied = booking.getPromoDiscountAmount() == null ? 0 : booking.getPromoDiscountAmount();
-                promoMsg = "\n\nPromo applied: " + booking.getPromoCode().getCode() + " - Rs" + applied +
-                        String.format("\nNew total: Rs%.2f + deposit Rs%.2f", (double) booking.getPrice(), deposit);
+                promoMsg = String.format("\n\nPromo applied: %s - %s\nNew total: %s + deposit %s",
+                        booking.getPromoCode().getCode(), formatMoney(BigDecimal.valueOf(applied)), totalStr, depositStr);
             }
 
             return String.format(
                     "✅ Booking confirmed, %s! 🎉\n" +
-                            "📅 *%s → %s*\n🏍️ *%s*\n💰 Rs%.2f + deposit Rs%.2f%s\n\n" +
+                            "📅 *%s → %s*\n🏍️ *%s*\n💰 %s + deposit %s%s\n\n" +
                             "Please prepare your documents for verification:\n" +
                             "📸 Driver’s or international license\n📄 Passport & visa QR\n\n" +
                             "Our team will contact you soon to finalize pickup or delivery.%s\n\n" +
@@ -796,8 +861,8 @@ public class ConversationService {
                     dateFormatter.format(user.getStartDate()),
                     dateFormatter.format(endDate),
                     selectedBike.getName(),
-                    total,
-                    deposit,
+                    totalStr,
+                    depositStr,
                     promoMsg,
                     pickupMsg
             );
@@ -843,8 +908,11 @@ public class ConversationService {
             Bike b = availableBikes.get(i);
             String id = String.valueOf(i + 1);
             bikeMapRaw.put(id, b.getId());
+            // Format price using exchange service (base USD -> active currency)
+            BigDecimal price = BigDecimal.valueOf(b.getPricePerDay());
+            String priceDisplay = formatMoney(price);
             list.append(id).append(". ").append(b.getName())
-                    .append(" - Rs.").append(b.getPricePerDay()).append("/day\n");
+                    .append(" - ").append(priceDisplay).append("/day\n");
         }
         sessionData.put("bikeMap", bikeMapRaw);
         saveSession(session, "ASK_BIKE", sessionData, user == null ? null : user.getPhoneNumber());
@@ -877,10 +945,33 @@ public class ConversationService {
                 }
             }
             return false;
-         } catch (Exception e) {
-             log.warn("⚠️ Failed to check promo mappings for promo {}: {}", promo == null ? "(null)" : promo.getCode(), e.getMessage());
-             return false;
-         }
-     }
+        } catch (Exception e) {
+            log.warn("⚠️ Failed to check promo mappings for promo {}: {}", promo == null ? "(null)" : promo.getCode(), e.getMessage());
+            return false;
+        }
+    }
 
+    // Helper to format money using active currency and exchange rate
+    private String formatMoney(BigDecimal amountInBase) {
+        try {
+            if (exchangeRateService == null) {
+                // Legacy fallback: original app used LKR (Rs) and integer amounts.
+                if (amountInBase == null) return "Rs0";
+                java.math.BigDecimal v = amountInBase.setScale(0, java.math.RoundingMode.HALF_UP);
+                return "Rs" + v.toPlainString();
+            }
+
+            String active = exchangeRateService.getActiveCurrency();
+            BigDecimal converted = exchangeRateService.convert(amountInBase, "USD", active);
+            // Format like: LKR 1,200.00
+            java.text.NumberFormat nf = java.text.NumberFormat.getNumberInstance(Locale.US);
+            nf.setMinimumFractionDigits(2);
+            nf.setMaximumFractionDigits(2);
+            String num = nf.format(converted);
+            return String.format("%s %s", active, num);
+        } catch (Exception e) {
+            if (amountInBase == null) return "USD 0.00";
+            return "USD " + amountInBase.setScale(2, java.math.RoundingMode.HALF_UP).toString();
+        }
+    }
 }

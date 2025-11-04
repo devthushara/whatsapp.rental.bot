@@ -3,6 +3,7 @@ package com.zoomigo.whatsapp.whatsapprentalbot.entity;
 import jakarta.persistence.*;
 import lombok.Data;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 
@@ -37,6 +38,10 @@ public class Booking {
 
     // Whether a promo was applied to this booking
     private Boolean promoApplied = false;
+
+    // Currency unit and exchange rate captured at booking time (for historical accuracy)
+    private String currencyUnit; // e.g., USD, LKR
+    private BigDecimal appliedExchangeRate; // rate used to convert from base (USD) to booking currency
 
     @Column(nullable = false, updatable = false)
     private Instant createdAt = Instant.now();

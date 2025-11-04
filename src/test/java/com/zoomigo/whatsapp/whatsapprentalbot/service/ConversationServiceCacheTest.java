@@ -26,7 +26,10 @@ class ConversationServiceCacheTest {
         ConversationService svc = new ConversationService(userRepo, bikeRepo, chatSessionRepo, sessionResetService, bookingRepo, promoRepo, promoBikeRepo);
         svc.setCacheManager(new ConcurrentMapCacheManager("bikes", "promos"));
 
-        Bike b = new Bike(); b.setId(900L); b.setName("CacheBike"); b.setPricePerDay(100);
+        Bike b = new Bike();
+        b.setId(900L);
+        b.setName("CacheBike");
+        b.setPricePerDay(100);
         when(bikeRepo.findByIsAvailableTrue()).thenReturn(List.of(b));
 
         // first call should populate cache
@@ -52,7 +55,10 @@ class ConversationServiceCacheTest {
         ConversationService svc = new ConversationService(userRepo, bikeRepo, chatSessionRepo, sessionResetService, bookingRepo, promoRepo, promoBikeRepo);
         svc.setCacheManager(new ConcurrentMapCacheManager("bikes", "promos"));
 
-        PromoCode p = new PromoCode(); p.setId(55L); p.setCode("CACHEME"); p.setActive(true);
+        PromoCode p = new PromoCode();
+        p.setId(55L);
+        p.setCode("CACHEME");
+        p.setActive(true);
         when(promoRepo.findByCodeIgnoreCase("CACHEME")).thenReturn(java.util.Optional.of(p));
 
         PromoCode a = svc.getPromoByCode("CACHEME");

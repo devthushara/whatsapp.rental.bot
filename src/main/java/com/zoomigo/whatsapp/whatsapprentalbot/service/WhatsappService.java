@@ -17,17 +17,30 @@ import java.util.Map;
 public class WhatsappService {
 
     private final RestTemplate restTemplate = new RestTemplate();
-
+    private final WebClient webClient;
+    @Value("${whatsapp.api-base-url:}")
+    private String apiBaseUrlProp;
+    // alias for older tests
     @Value("${whatsapp.api-base-url:}")
     private String apiBaseUrl;
+
+    @Value("${whatsapp.api-version:}")
+    private String apiVersionProp;
+    // alias for older tests
     @Value("${whatsapp.api-version:}")
     private String apiVersion;
+
+    @Value("${whatsapp.phone-number-id:}")
+    private String phoneNumberIdProp;
+    // alias for older tests
     @Value("${whatsapp.phone-number-id:}")
     private String phoneNumberId;
+
+    @Value("${whatsapp.access-token:}")
+    private String accessTokenProp;
+    // alias for older tests
     @Value("${whatsapp.access-token:}")
     private String accessToken;
-
-    private final WebClient webClient;
 
     @Autowired
     public WhatsappService(WebClient whatsappWebClient) {
@@ -40,6 +53,11 @@ public class WhatsappService {
 
     public void sendTextMessage(String to, String body) {
         try {
+            String apiBaseUrl = apiBaseUrlProp == null || apiBaseUrlProp.isBlank() ? this.apiBaseUrl : apiBaseUrlProp;
+            String apiVersion = apiVersionProp == null || apiVersionProp.isBlank() ? this.apiVersion : apiVersionProp;
+            String phoneNumberId = phoneNumberIdProp == null || phoneNumberIdProp.isBlank() ? this.phoneNumberId : phoneNumberIdProp;
+            String accessToken = accessTokenProp == null || accessTokenProp.isBlank() ? this.accessToken : accessTokenProp;
+
             String urlPath = String.format("/%s/%s/messages", apiVersion, phoneNumberId);
 
             Map<String, Object> message = new HashMap<>();
@@ -50,7 +68,7 @@ public class WhatsappService {
 
             log.info("📤 Sending WhatsApp message to {}: {}", to, body);
 
-            if (webClient != null) {
+            if (webClient != null && apiBaseUrl != null && !apiBaseUrl.isBlank()) {
                 // Non-blocking send; fire-and-forget
                 WebClient.RequestBodySpec req = webClient.post().uri(urlPath)
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON);

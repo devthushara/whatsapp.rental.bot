@@ -49,12 +49,12 @@ class WebhookControllerTest {
 
         WebhookController c = new WebhookController(chat, ws, exec);
 
-        Map<String,Object> text = Map.of("body", "Hello");
-        Map<String,Object> msg = Map.of("from", "123", "type", "text", "text", text);
-        Map<String,Object> value = Map.of("messages", List.of(msg));
-        Map<String,Object> change = Map.of("value", value);
-        Map<String,Object> entry = Map.of("changes", List.of(change));
-        Map<String,Object> payload = Map.of("entry", List.of(entry));
+        Map<String, Object> text = Map.of("body", "Hello");
+        Map<String, Object> msg = Map.of("from", "123", "type", "text", "text", text);
+        Map<String, Object> value = Map.of("messages", List.of(msg));
+        Map<String, Object> change = Map.of("value", value);
+        Map<String, Object> entry = Map.of("changes", List.of(change));
+        Map<String, Object> payload = Map.of("entry", List.of(entry));
 
         when(chat.handleMessage("123", "Hello")).thenReturn("reply!");
 
@@ -73,11 +73,11 @@ class WebhookControllerTest {
         WebhookController c = new WebhookController(chat, ws, exec);
 
         // message with type 'image' and no 'text' block
-        Map<String,Object> msg = Map.of("from", "999", "type", "image");
-        Map<String,Object> value = Map.of("messages", List.of(msg));
-        Map<String,Object> change = Map.of("value", value);
-        Map<String,Object> entry = Map.of("changes", List.of(change));
-        Map<String,Object> payload = Map.of("entry", List.of(entry));
+        Map<String, Object> msg = Map.of("from", "999", "type", "image");
+        Map<String, Object> value = Map.of("messages", List.of(msg));
+        Map<String, Object> change = Map.of("value", value);
+        Map<String, Object> entry = Map.of("changes", List.of(change));
+        Map<String, Object> payload = Map.of("entry", List.of(entry));
 
         ResponseEntity<String> res = c.receive(payload);
         assertThat(res.getStatusCode().value()).isEqualTo(200);
@@ -92,7 +92,7 @@ class WebhookControllerTest {
         ThreadPoolTaskExecutor exec = mock(ThreadPoolTaskExecutor.class);
 
         WebhookController c = new WebhookController(chat, ws, exec);
-        Map<String,Object> payload = Map.of();
+        Map<String, Object> payload = Map.of();
         ResponseEntity<String> res = c.receive(payload);
         assertThat(res.getBody()).isEqualTo("No entry");
     }
@@ -105,10 +105,10 @@ class WebhookControllerTest {
 
         WebhookController c = new WebhookController(chat, ws, exec);
 
-        Map<String,Object> value = Map.of();
-        Map<String,Object> change = Map.of("value", value);
-        Map<String,Object> entry = Map.of("changes", List.of(change));
-        Map<String,Object> payload = Map.of("entry", List.of(entry));
+        Map<String, Object> value = Map.of();
+        Map<String, Object> change = Map.of("value", value);
+        Map<String, Object> entry = Map.of("changes", List.of(change));
+        Map<String, Object> payload = Map.of("entry", List.of(entry));
 
         ResponseEntity<String> res = c.receive(payload);
         assertThat(res.getBody()).isEqualTo("No messages");

@@ -20,7 +20,7 @@ public class PromoCode {
     private Integer totalAllocation = 0; // total allowed usages
     private Integer usedCount = 0; // how many used so far
 
-    // Flat discount in currency units (e.g., Rs50)
+    // Flat discount in currency units (e.g., 50)
     private Integer discountAmount = 0;
 
     // Percentage discount (0-100). When set (>0), percentage discount is applied instead
@@ -28,4 +28,7 @@ public class PromoCode {
     private Integer discountPercent = 0;
 
     private Boolean active = true;
+
+    // Currency unit for this promo (e.g., LKR, USD). If null, fallback to system default.
+    private String currencyUnit;
 }

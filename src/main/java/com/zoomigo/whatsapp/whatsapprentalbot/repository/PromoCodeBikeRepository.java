@@ -7,6 +7,7 @@ import java.util.List;
 
 public interface PromoCodeBikeRepository extends JpaRepository<PromoCodeBike, Long> {
     List<PromoCodeBike> findByPromoCode_Id(Long promoId);
+
     List<PromoCodeBike> findByPromoCode_CodeIgnoreCase(String code);
 }
 
